@@ -4,6 +4,14 @@
 
 <h1 align="center">Cookie Dumper</h1>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/aaronsb/cookiedumper" alt="License: MIT"></a>
+  <img src="https://img.shields.io/github/v/release/aaronsb/cookiedumper?include_prereleases&label=version" alt="Latest release">
+  <img src="https://img.shields.io/badge/manifest-v3-blue" alt="Manifest V3">
+  <img src="https://img.shields.io/badge/deps-none-brightgreen" alt="Zero dependencies">
+  <a href="https://github.com/aaronsb/cookiedumper/stargazers"><img src="https://img.shields.io/github/stars/aaronsb/cookiedumper?style=social" alt="Stars"></a>
+</p>
+
 A **token-gated localhost API** that serves your browser's live cookies for
 **any site you ask for, on demand** — as **dotenv-shaped text, JSON, or shell
 `export`s**. Nothing is written to disk. Built for debugging your own apps: pull a
