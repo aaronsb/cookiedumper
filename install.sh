@@ -35,6 +35,21 @@ say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Print a shell-aware PATH hint. We do NOT edit the user's rc — we tell them how.
+path_hint() {
+  local dir="$1" sh rc
+  sh="$(basename "${SHELL:-sh}")"
+  case "$sh" in
+    zsh)  rc="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash) rc="$HOME/.bashrc" ;;
+    *)    rc="$HOME/.profile" ;;
+  esac
+  warn "$dir is not on your PATH — the 'cookiedumper' command won't be found yet."
+  printf "      Not editing your rc. Add it yourself (detected %s):\n" "$sh" >&2
+  printf "        echo 'export PATH=\"%s:\$PATH\"' >> %s\n" "$dir" "$rc" >&2
+  printf "      …or add %s to your existing PATH statement, then restart your shell.\n" "$dir" >&2
+}
+
 command -v node >/dev/null 2>&1 || die "Node.js (>=18) is required and was not found on PATH."
 
 # ---- fetch / update ----
@@ -65,7 +80,7 @@ if [ "$DO_SYMLINK" = 1 ]; then
   say "linked $BIN_DIR/cookiedumper -> cli.js"
   case ":$PATH:" in
     *":$BIN_DIR:"*) : ;;
-    *) warn "$BIN_DIR is not on your PATH. Add it:  export PATH=\"$BIN_DIR:\$PATH\"" ;;
+    *) path_hint "$BIN_DIR" ;;
   esac
 fi
 
