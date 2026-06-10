@@ -1,132 +1,141 @@
 # Cookie Dumper
 
-Dump cookies for a site pattern into `.env` format — **live**, so the file keeps
-reflecting fresh session tokens as they rotate. Built for debugging your own apps:
-pull session IDs / CSRF tokens straight into a `.env` your tools can read.
+Pull cookies for **one site, on demand**, as `.env` — over a **token-gated
+localhost endpoint**, never touching disk. Built for debugging your own apps:
+fetch a live session token straight into your tool without leaving secrets lying
+around in files.
 
 It does the thing you (rightly) wouldn't trust a random store extension to do —
-read your `HttpOnly` session cookies and write them to disk — so it's deliberately
-small, dependency-free, and readable end to end. Read it, then trust it.
+read your `HttpOnly` session cookies — so it's deliberately small, dependency-free,
+and readable end to end. Read it, then trust it.
 
-## How it's wired
+## Why this shape
 
-The cookie reading lives in the **extension** (`chrome.cookies` works on every OS —
-no DB decryption, no keyring, no `peanuts`). A tiny **CLI** never touches Chrome; it
-just validates and appends commands to a log file. A **native host** (plain Node)
-bridges the filesystem to the extension. The command log is the single source of
-truth — the CLI and the popup both drive it.
+The only thing that can read cookies is the **extension** (`chrome.cookies` —
+cross-platform, no DB decryption, no keyring). A Chrome service worker can't host
+a server, so the **native host** (plain Node, spawned by Chrome) does double duty:
+it bridges the extension over the native-messaging port *and* binds a `127.0.0.1`
+HTTP server. The **CLI** and your app are just HTTP clients.
 
 ```
-CLI (validating appender)            filesystem                  extension + native host
-──────────────────────────     ──────────────────────      ─────────────────────────────────
-cookiedumper set/dump/...   ─►   commands.jsonl   ◄── fs.watch ──►  service worker (chrome.cookies)
-cookiedumper tail           ◄─   events.jsonl     ◄── append   ◄──  reports each action
-cookiedumper status         ◄─   heartbeat.json   ◄── stamp    ◄──  liveness + offset
-                                 <your>/.env      ◄── write    ◄──  dump output (0600)
+your app / curl ──HTTP + bearer token──►┐
+cookiedumper CLI ─HTTP + bearer token──►│ native host (127.0.0.1:8787)  ──native msg──► extension SW
+                                         │   GET /env?site=app.example.com   (relays)      reads cookies
+                                         │   GET /events?site=…  (SSE, live) ◄──────────  for THAT site only
+                                         └─  token in ~/.config/cookiedumper/server.json (0600)
 ```
 
-**Live capture** rides `chrome.cookies.onChanged` (an MV3 event that *wakes* the
-worker), debounced → re-dump → write. Pair it with the periodic tab-refresh that
-*drives* rotation, and the loop is: refresh tab → server issues new cookie →
-`onChanged` fires → `.env` rewritten. The on-disk file stays continuously current.
-
-Control dir (override with `COOKIEDUMPER_DIR`): `~/.config/cookiedumper/`.
+- **Per-site, on demand.** The *request* names the site; you only ever get the
+  cookies you asked for. Nothing is pre-configured, nothing is dumped wholesale.
+- **Memory-only.** Cookies are read fresh per request and returned in the HTTP
+  response. They are never written to disk.
+- **The extension needs no token.** Chrome only lets your allowed extension ID open
+  the native port, so the extension is authenticated implicitly. The bearer token
+  only guards the HTTP side (CLI + your app).
 
 ## Setup
 
 ### 1. Load the extension
-
 1. `chrome://extensions` → **Developer mode** → **Load unpacked** → this folder.
 2. Copy the extension **ID** from its card.
 
 ### 2. Install the CLI + native host
-
 ```bash
 npm link                              # puts `cookiedumper` on your PATH (no deps)
 cookiedumper host install <EXTENSION_ID>
 ```
-
-`host install` writes a native-messaging manifest (pointing at `host.js`, locked to
-your extension ID) into each installed Chromium-family browser's config dir, on Linux
-**and** macOS. Then **fully quit and reopen** the browser so it picks up the host.
-
-> Prefer not to use npm? Run the CLI as `node cli.js …`, and the Linux-only
-> `./install-host.sh <EXTENSION_ID>` does the same host registration.
+Then **fully quit and reopen** the browser so it spawns the host (which starts the
+server). On Linux you can use `./install-host.sh <EXTENSION_ID>` instead of npm.
 
 ### 3. Verify
-
 ```bash
-cookiedumper status        # should show extension ALIVE once the browser is open
+cookiedumper status      # prints {"ok":true,...} once the browser is open
 ```
-…or click **Test host** in the popup.
 
-## CLI
+## Use
 
 ```bash
-cookiedumper set pattern example.com      # bare domain (+subdomains) or full URL
-cookiedumper set target ~/projects/app/.env   # must be inside $HOME
-cookiedumper live on                      # rewrite .env on every cookie change
-cookiedumper set refreshTab true          # reload matching tabs on each tick
-cookiedumper on                           # enable the recurring tick
-cookiedumper set intervalSec 60           # tick period (30s floor — Chrome's limit)
-
-cookiedumper dump                         # one-shot dump now
-cookiedumper refresh                      # reload matching tabs now
-cookiedumper get                          # show derived config
-cookiedumper status                       # config + liveness + last event
-cookiedumper tail                         # follow events.jsonl
-cookiedumper tail --env                   # follow the target .env as it rewrites
-cookiedumper path                         # print the control dir
+cookiedumper env app.example.com                 # print .env for one site
+cookiedumper env app.example.com > .env          # ...if you DO want a file (your choice)
+cookiedumper env app.example.com --refresh       # reload the tab first (rotate), then dump
+cookiedumper env api.example.com --prefix API_ --no-quote
+cookiedumper watch app.example.com               # stream a fresh .env on every cookie change
+cookiedumper refresh app.example.com             # just reload matching tabs
+cookiedumper status                              # server status + token location
+cookiedumper token                               # print the bearer token
+cookiedumper curl app.example.com                # ready-to-paste curl command
 cookiedumper host install <ID> | uninstall
 ```
 
-Every command is **validated** (target inside `$HOME`, interval ≥ 30, known keys,
-booleans) and appended as one JSON line to `commands.jsonl`. The extension's host
-watches that file and executes within milliseconds.
+From any tool, with the token:
+```bash
+TOK=$(cookiedumper token); PORT=$(cookiedumper status --port)
+curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:$PORT/env?site=app.example.com"
+```
+
+`site` is a bare domain (matches host + subdomains) or a full URL (exact origin).
+
+## Endpoints
+
+| Method | Path | Returns |
+|---|---|---|
+| `GET` | `/env?site=<s>&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | `.env` text for that site |
+| `GET` | `/events?site=<s>` | SSE stream; a fresh `.env` per cookie change (live) |
+| `POST`/`GET` | `/refresh?site=<s>` | reload matching tabs `{ok,tabs}` |
+| `GET` | `/status` | `{ok, version, port}` |
+
+All require `Authorization: Bearer <token>`.
 
 ## Popup
 
-The popup is a live-preview + manual-trigger UI over the same command log:
-
-- **Dump (preview)** / **Copy** / **Download .env** — inline, no file write.
-- **Target / Live / Refresh / Recurring** — write through to the command log, so
-  the CLI sees the same settings (and vice-versa).
-- **Write now**, **Refresh tabs**, **Test host**.
+A live-preview convenience UI: type a site, **Preview** reads cookies inline
+(no server, no disk), **Copy** to clipboard. It also shows the server URL and a
+**Copy token** button so you can wire up your app.
 
 ## Output format
 
 ```
-# cookiedumper example.com @ 2026-06-10T19:00:00.000Z
-CSRFTOKEN="..."
+# cookiedumper app.example.com @ 2026-06-10T19:00:00.000Z
+CSRF_TOKEN="..."
 SESSIONID="abc123..."
 ```
+UPPER_SNAKE keys (non-alphanumeric → `_`), values quoted. `HttpOnly` cookies are
+included (that's the point). Duplicates de-duped; key collisions get a numeric suffix.
 
-- **UPPER_SNAKE keys** — uppercase; non-alphanumeric → `_` (`session-id` → `SESSION_ID`).
-- **Quote values** — wrap in double quotes (values often contain `=`/`;`/spaces).
-- **Prefix** — optional string prepended to every key.
+## Security
 
-`HttpOnly` cookies **are** included (the `chrome.cookies` API exposes them, unlike
-`document.cookie`) — the whole point for session debugging. Duplicate names are
-de-duped; post-sanitization key collisions get a numeric suffix.
+This is a tool that reads your session cookies, so the boundaries matter:
+
+- **Loopback only.** The server binds `127.0.0.1`, never `0.0.0.0`.
+- **Bearer token on every endpoint**, compared in constant time, **fail-closed**.
+  Token is 32 random bytes, stored `0600` in `~/.config/cookiedumper/server.json`,
+  and reused across restarts so your app's config keeps working.
+- **Anti-CSRF / anti-DNS-rebinding.** Any request carrying an `Origin` header
+  (i.e. from a web page) is refused, and the `Host` header must be loopback. A
+  malicious site in your browser cannot reach the endpoint.
+- **No secrets on disk.** Cookies live only in the HTTP response. The lone disk
+  artifact is the token file. If *you* redirect `env` output to a file, that's your
+  `.env` to manage — `.gitignore` excludes `*.env`.
+- **The extension is gated by Chrome** (`allowed_origins` = your extension ID) and
+  needs no token.
 
 ## Permissions
 
 | Permission | Why |
 |---|---|
-| `cookies` + `host_permissions: <all_urls>` | read cookies for any domain you type |
-| `tabs` | find + refresh matching open tabs |
-| `alarms` | recurring tick + revive the worker / port |
-| `storage` | persist derived config + offset |
-| `nativeMessaging` | talk to the local `host.js` (the only thing that touches disk) |
+| `cookies` + `host_permissions: <all_urls>` | read cookies for any site you request |
+| `tabs` | refresh matching tabs (`--refresh`) to drive rotation |
+| `alarms` | reconnect backstop / keep the worker alive |
+| `storage` | hold server info for the popup |
+| `nativeMessaging` | talk to the local host that runs the server |
 
-## Safety notes
+## Caveats
 
-- **Writes are confined to `$HOME`.** Both the CLI (refuses to even queue an outside
-  path) and `host.js` enforce this; `CD_ALLOW_OUTSIDE_HOME=1` in the host's env overrides.
-  Files are written `0600`.
-- Dumped `.env` files contain **live session tokens** — treat them as secrets.
-  `.gitignore` excludes `*.env`.
-- The host only accepts connections from your specific extension ID (`allowed_origins`).
+- The server is up **only while the browser + extension worker are alive** — by
+  design, since the extension is the only cookie source. A keepalive holds the MV3
+  worker open; if Chrome reaps it anyway, `status` will say so and a reload revives it.
+- One browser at a time (a second connecting browser falls back to an ephemeral
+  port, recorded in `server.json`).
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "cookiedumper",
-  "version": "1.2.0",
-  "description": "Dump live cookies for a site pattern into .env, driven from a CLI command log. Chrome (MV3) extension + native host + thin CLI.",
+  "version": "2.0.0",
+  "description": "Secure on-demand cookie dumping over a token-gated localhost endpoint. Chrome (MV3) extension + native host (HTTP server) + CLI client.",
   "bin": {
     "cookiedumper": "cli.js"
   },

@@ -8,69 +8,52 @@
     h1 { font-size: 14px; margin: 0 0 4px; }
     h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 14px 0 6px; }
     label { display: block; font-weight: 600; margin: 8px 0 3px; }
-    input[type="text"], input[type="number"] { box-sizing: border-box; padding: 6px 8px; font: inherit; }
-    input[type="text"]#pattern, input[type="text"]#target { width: 100%; }
+    input[type="text"] { box-sizing: border-box; padding: 6px 8px; font: inherit; width: 100%; }
     .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
-    .row.opts label, fieldset label { font-weight: 400; margin: 0; display: flex; align-items: center; gap: 4px; }
+    .row.opts label { font-weight: 400; margin: 0; display: flex; align-items: center; gap: 4px; }
     button { padding: 6px 12px; font: inherit; cursor: pointer; }
     button.primary { font-weight: 600; }
     textarea {
-      width: 100%; box-sizing: border-box; height: 150px;
+      width: 100%; box-sizing: border-box; height: 160px;
       font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 8px; resize: vertical; white-space: pre;
     }
     fieldset { border: 1px solid rgba(128,128,128,.4); border-radius: 6px; padding: 8px 10px; margin: 0; }
+    code { font: 12px/1.4 ui-monospace, monospace; }
+    #server { font-size: 11px; }
     #status { font-size: 12px; opacity: 0.8; min-height: 16px; margin-top: 6px; }
-    #conn { font-size: 11px; }
     .hint { font-size: 11px; opacity: 0.65; margin: 2px 0 0; }
     .err { color: #c0392b; } .ok { color: #2d7d46; }
+    .mono { font: 12px/1.4 ui-monospace, monospace; word-break: break-all; }
   </style>
 </head>
 <body>
-  <h1>🍪 Cookie Dumper</h1>
-  <div id="conn" class="hint">checking host…</div>
+  <h1>🍪 Cookie Dumper <span class="hint">secure</span></h1>
+  <div id="server" class="hint">checking server…</div>
 
-  <label for="pattern">Site pattern</label>
-  <input type="text" id="pattern" placeholder="example.com  or  https://app.example.com" />
-  <p class="hint">Bare domain matches host + subdomains. Full URL matches that exact origin/path.</p>
+  <label for="site">Site</label>
+  <input type="text" id="site" placeholder="app.example.com  or  https://app.example.com" />
+  <p class="hint">Per-site, on-demand — only the cookies you ask for. Nothing is written to disk.</p>
 
   <div class="row opts">
     <label><input type="checkbox" id="upper" checked /> UPPER_SNAKE keys</label>
     <label><input type="checkbox" id="quote" checked /> Quote values</label>
-    <label>Prefix <input type="text" id="prefix" style="width:90px" placeholder="(none)" /></label>
   </div>
 
   <div class="row">
-    <button id="dump" class="primary">Dump (preview)</button>
+    <button id="preview" class="primary">Preview</button>
     <button id="copy">Copy</button>
-    <button id="download">Download .env</button>
   </div>
+  <textarea id="output" spellcheck="false" placeholder="# preview appears here"></textarea>
 
-  <textarea id="output" spellcheck="false" placeholder="# .env preview appears here"></textarea>
-
-  <h2>Live capture &amp; write-to-disk</h2>
+  <h2>Localhost server</h2>
   <fieldset>
-    <label for="target">Target file (written by the native host)</label>
-    <input type="text" id="target" placeholder="~/projects/app/.env   (blank = no file write)" />
-    <p class="hint">Must be inside your home dir. The popup never writes files — the local host does.</p>
-
+    <p class="hint">Your app/CLI fetches cookies from here with the bearer token. Token gates HTTP; the extension is trusted via native messaging.</p>
+    <label>Token</label>
     <div class="row">
-      <label><input type="checkbox" id="live" /> Live: rewrite on every cookie change</label>
+      <span id="token" class="mono">—</span>
+      <button id="copyToken">Copy token</button>
     </div>
-    <div class="row">
-      <label><input type="checkbox" id="refreshTab" /> Refresh matching tab(s) on each tick</label>
-    </div>
-    <div class="row">
-      <label><input type="checkbox" id="recurring" /> Recurring tick every</label>
-      <input type="number" id="intervalSec" min="30" step="5" value="60" style="width:80px" /> sec
-      <span class="hint">(30s floor)</span>
-    </div>
-
-    <div class="row">
-      <button id="writeNow">Write now</button>
-      <button id="refresh">Refresh tabs</button>
-      <button id="ping">Test host</button>
-    </div>
-    <p class="hint">Settings are shared with the <code>cookiedumper</code> CLI via the command log.</p>
+    <p class="hint" id="example">—</p>
   </fieldset>
 
   <div id="status"></div>

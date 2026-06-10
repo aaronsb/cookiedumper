@@ -1,31 +1,19 @@
 "use strict";
 
-// Service worker — the executor. Connects to the native host (held open as a
-// long-lived port), receives command lines the host reads from commands.jsonl,
-// and does the actual cookie work, writing results back through the host.
-// The command log is the single source of truth; config is derived by folding
-// "config" ops. Live capture rides chrome.cookies.onChanged.
+// Service worker — the only thing that can read cookies. It connects to the
+// native host (which also runs the localhost HTTP server) and answers relayed
+// per-site requests: dump cookies for one site on demand, refresh that site's
+// tabs, or subscribe to live updates via cookies.onChanged. Nothing is stored;
+// each response is built fresh and handed back over the native port.
 importScripts("format.js");
 
 const HOST = "com.aaronsb.cookiedumper";
-const ALARM = "cd-tick";
+const ALARM = "cd-keepalive";
 
 let port = null;
-let cfg = {};
-let dumpTimer = null;
-
-function wait(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function loadState() {
-  const o = await chrome.storage.local.get(["cdCfg", "cdOffset"]);
-  cfg = o.cdCfg || {};
-  return o.cdOffset || 0;
-}
-async function saveCfg() {
-  await chrome.storage.local.set({ cdCfg: cfg });
-}
+let serverInfo = null;
+const subs = new Map(); // id -> { site, opts }
+const debounce = new Map(); // id -> timer
 
 function connect() {
   if (port) return;
@@ -36,58 +24,73 @@ function connect() {
     return;
   }
   port.onMessage.addListener(onHostMessage);
-  port.onDisconnect.addListener(() => { port = null; });
-  loadState().then((off) => {
-    if (port) port.postMessage({ type: "hello", offset: off });
+  port.onDisconnect.addListener(() => {
+    port = null;
+    serverInfo = null;
+    subs.clear();
   });
 }
 
-function logEvent(event) {
-  if (port) port.postMessage({ type: "event", event });
-}
-function sendState() {
-  if (port) port.postMessage({ type: "state", state: { cfg } });
-}
-function setBadge(text, bad) {
-  chrome.action.setBadgeBackgroundColor({ color: bad ? "#c0392b" : "#2d7d46" });
-  chrome.action.setBadgeText({ text: String(text).slice(0, 4) });
+function reply(msg) {
+  if (port) port.postMessage(msg);
 }
 
 async function onHostMessage(msg) {
   if (!msg) return;
-  if (msg.type === "commands") {
-    for (const line of msg.lines) await applyCommand(line, msg.initial === true);
-    await chrome.storage.local.set({ cdOffset: msg.offset });
-    sendState();
-    return;
+  switch (msg.type) {
+    case "ready":
+      serverInfo = msg.server;
+      chrome.storage.local.set({ cdServer: { ...serverInfo, connected: true } });
+      return;
+    case "hb":
+      return; // keepalive; just receiving it keeps us alive
+    case "dump": {
+      const r = await dump(msg.site, msg.opts, msg.refresh);
+      reply({ type: "dumpResult", id: msg.id, ...r });
+      return;
+    }
+    case "refresh": {
+      const tabs = await refreshTabs(msg.site);
+      reply({ type: "refreshResult", id: msg.id, ok: true, tabs });
+      return;
+    }
+    case "subscribe":
+      subs.set(msg.id, { site: msg.site, opts: msg.opts || {} });
+      // push an initial snapshot immediately
+      emit(msg.id);
+      return;
+    case "unsubscribe": {
+      subs.delete(msg.id);
+      const t = debounce.get(msg.id);
+      if (t) { clearTimeout(t); debounce.delete(msg.id); }
+      return;
+    }
+    case "serverError":
+      chrome.storage.local.set({ cdServer: { error: msg.error, connected: false } });
+      return;
   }
-  if (msg.type === "writeResult") {
-    if (msg.ok) logEvent({ kind: "write", path: msg.path, bytes: msg.bytes });
-    else logEvent({ kind: "error", error: msg.error });
-    setBadge(msg.ok ? "ok" : "ERR", !msg.ok);
-    return;
-  }
-  // "ready" / "hb" / "pong" need no action (hb just keeps us alive).
 }
 
-async function applyCommand(line, isInitial) {
-  let c;
-  try { c = JSON.parse(line); } catch (_) { return; }
-  if (c.op === "config" && c.set) {
-    Object.assign(cfg, c.set);
-    await saveCfg();
-    setupAlarm();
-    if (!isInitial) logEvent({ kind: "config", set: c.set });
-    return;
+async function dump(site, opts, refresh) {
+  const filter = CD.buildFilter(site);
+  if (!filter) return { ok: false, error: "invalid site" };
+  if (refresh) {
+    const n = await refreshTabs(site);
+    if (n) await new Promise((r) => setTimeout(r, 1500));
   }
-  if (isInitial) return; // don't replay historical one-shot actions on cold start
-  if (c.op === "dump") await doDump("cmd");
-  else if (c.op === "refresh") await refreshTabs();
+  let cookies;
+  try {
+    cookies = await CD.getCookies(filter);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  const stamp = new Date().toISOString();
+  const env = CD.formatEnv(cookies, opts || {}, { header: `# cookiedumper ${site} @ ${stamp}` });
+  return { ok: true, env, count: cookies.length };
 }
 
-async function refreshTabs() {
-  const filter = CD.buildFilter(cfg.pattern);
-  const host = CD.filterHost(filter);
+async function refreshTabs(site) {
+  const host = CD.filterHost(CD.buildFilter(site));
   if (!host) return 0;
   let tabs = [];
   try {
@@ -96,75 +99,42 @@ async function refreshTabs() {
     return 0;
   }
   await Promise.all(tabs.map((t) => chrome.tabs.reload(t.id).catch(() => {})));
-  if (tabs.length) logEvent({ kind: "refresh", tabs: tabs.length, host });
   return tabs.length;
 }
 
-async function doDump(reason) {
-  const filter = CD.buildFilter(cfg.pattern);
-  if (!filter) return;
-  let cookies;
-  try {
-    cookies = await CD.getCookies(filter);
-  } catch (e) {
-    logEvent({ kind: "error", error: e.message });
-    return;
-  }
-  const stamp = new Date().toISOString();
-  const env = CD.formatEnv(cookies, cfg, { header: `# cookiedumper ${cfg.pattern} @ ${stamp}` });
-  logEvent({ kind: "dump", reason, count: cookies.length, pattern: cfg.pattern, target: cfg.target || null });
-  if (cfg.target && port) port.postMessage({ type: "write", id: stamp, path: cfg.target, content: env });
-  setBadge(String(cookies.length), false);
-  await chrome.storage.local.set({ cdLast: { stamp, count: cookies.length, env, reason } });
+async function emit(id) {
+  const sub = subs.get(id);
+  if (!sub) return;
+  const r = await dump(sub.site, sub.opts, false);
+  if (r.ok) reply({ type: "event", id, event: "dump", site: sub.site, count: r.count, env: r.env });
 }
 
-// Live capture: re-dump (debounced) when a matching cookie changes.
-function matchesPattern(cookie) {
-  const filter = CD.buildFilter(cfg.pattern);
-  const host = CD.filterHost(filter);
+// Live capture: when a cookie for a subscribed site changes, re-emit (debounced).
+function cookieMatches(site, cookie) {
+  const host = CD.filterHost(CD.buildFilter(site));
   if (!host) return false;
   const dom = (cookie.domain || "").replace(/^\./, "");
   return dom === host || dom.endsWith("." + host) || host.endsWith("." + dom);
 }
 chrome.cookies.onChanged.addListener((info) => {
-  if (!cfg.pattern || !cfg.live) return;
-  if (!matchesPattern(info.cookie)) return;
-  if (dumpTimer) clearTimeout(dumpTimer);
-  dumpTimer = setTimeout(() => doDump("live"), 400);
+  for (const [id, sub] of subs) {
+    if (!cookieMatches(sub.site, info.cookie)) continue;
+    if (debounce.has(id)) clearTimeout(debounce.get(id));
+    debounce.set(id, setTimeout(() => { debounce.delete(id); emit(id); }, 400));
+  }
 });
 
 function setupAlarm() {
-  const minutes = Math.max(0.5, (Number(cfg.intervalSec) || 60) / 60);
-  chrome.alarms.create(ALARM, { periodInMinutes: minutes });
+  chrome.alarms.create(ALARM, { periodInMinutes: 0.5 }); // backstop: revive the port if reaped
 }
-chrome.alarms.onAlarm.addListener(async (a) => {
-  if (a.name !== ALARM) return;
-  connect(); // revive the port if the worker had been killed
-  if (cfg.recurring && cfg.refreshTab) {
-    const n = await refreshTabs();
-    if (n) await wait(Number(cfg.refreshWaitMs) || 1500);
-  }
-  if (cfg.recurring && !cfg.live) await doDump("timer");
-});
-
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) connect(); });
 chrome.runtime.onInstalled.addListener(() => { connect(); setupAlarm(); });
 chrome.runtime.onStartup.addListener(() => { connect(); setupAlarm(); });
 
-// Popup commands. setConfig routes through the command log (host append) so the
-// popup and CLI share one source of truth.
-chrome.runtime.onMessage.addListener((m, _s, reply) => {
+// Popup: live preview reads cookies directly; this just surfaces server info.
+chrome.runtime.onMessage.addListener((m, _s, replyFn) => {
   if (!m) return false;
-  if (m.cmd === "setConfig" && m.set) {
-    connect();
-    const line = JSON.stringify({ op: "config", ts: new Date().toISOString(), set: m.set });
-    if (port) port.postMessage({ type: "append", line });
-    reply({ ok: !!port });
-    return false;
-  }
-  if (m.cmd === "dumpNow") { doDump("manual").then(() => reply({ ok: true })); return true; }
-  if (m.cmd === "refresh") { refreshTabs().then((n) => reply({ ok: true, tabs: n })); return true; }
-  if (m.cmd === "ping") { connect(); reply({ ok: !!port }); return false; }
-  if (m.cmd === "getState") { reply({ cfg, connected: !!port }); return false; }
+  if (m.cmd === "getServer") { connect(); replyFn({ server: serverInfo, connected: !!port }); return false; }
   return false;
 });
 

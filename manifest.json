@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Cookie Dumper",
-  "version": "1.2.0",
-  "description": "Dump live cookies for a site pattern into .env. Driven by a CLI command log; recurring + onChanged live capture; write-to-disk via a local native host.",
+  "version": "2.0.0",
+  "description": "Secure, on-demand cookie dumping: per-site .env served over a token-gated localhost endpoint by a local native host. Nothing written to disk.",
   "permissions": ["cookies", "tabs", "activeTab", "alarms", "storage", "nativeMessaging"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
