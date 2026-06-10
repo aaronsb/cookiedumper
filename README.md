@@ -44,23 +44,37 @@ cookiedumper CLI ─HTTP + bearer token──►│ native host (127.0.0.1:8787)
 
 ## Setup
 
-### 1. Load the extension
-`chrome://extensions` → **Developer mode** → **Load unpacked** → this folder (or a
-`dist/` from `npm run build`). The `key` in `manifest.json` fixes the extension ID,
-so it's the same on every machine.
+### Quick install (recommended)
 
-### 2. Install the CLI + native host
 ```bash
-npm link                  # puts `cookiedumper` on your PATH (no deps)
-cookiedumper host install # ID is baked in from the manifest key — no argument needed
+curl -fsSL https://raw.githubusercontent.com/aaronsb/cookiedumper/main/install.sh | bash
 ```
-Then **reload the extension** (↻ on its card) so it spawns the host (which starts
-the server).
 
-### 3. Verify
+Clones into `~/.local/share/cookiedumper` (XDG), symlinks `cookiedumper` into
+`~/.local/bin`, and registers the native messaging host (the extension ID is baked
+in from the manifest key, so no ID argument is needed). Re-run anytime to update.
+Flags via `… | bash -s -- <flags>`: `--no-symlink`, `--no-host`, `--dir <path>`,
+`--bin <path>`. Prefer to read before running? `curl -fsSL …/install.sh -o
+install.sh && less install.sh && bash install.sh`.
+
+Then in the browser:
+1. `chrome://extensions` → **Developer mode** → **Load unpacked** →
+   `~/.local/share/cookiedumper`
+2. Reload the extension (↻) — the host is already registered
+3. `cookiedumper status`   # expect `{"ok":true,...}`
+
+Uninstall: `curl -fsSL https://raw.githubusercontent.com/aaronsb/cookiedumper/main/uninstall.sh | bash`
+(add `-s -- --purge` to also delete the checkout).
+
+### Manual / development
+
 ```bash
-cookiedumper status      # prints {"ok":true,...} once the browser is open
+git clone https://github.com/aaronsb/cookiedumper && cd cookiedumper
+npm link                   # puts `cookiedumper` on PATH (no deps)
+cookiedumper host install  # ID baked in from the manifest key
 ```
+Load unpacked from the repo (or a `dist/` from `npm run build`), then reload the
+extension and `cookiedumper status`.
 
 ## Use
 
