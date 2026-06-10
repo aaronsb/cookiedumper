@@ -3,6 +3,15 @@
 *.env
 !*.env.example
 
+# Extension signing key — private, never commit (the public half lives in manifest.json "key")
+key.pem
+*.pem
+
+# Build output / release artifacts
+dist/
+*.zip
+*.crx
+
 # OS / editor cruft
 .DS_Store
 *.swp

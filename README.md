@@ -1,9 +1,17 @@
-# Cookie Dumper
+<p align="center">
+  <img src="docs/media/cookie_dumper_logo.svg" alt="Cookie Dumper" width="520">
+</p>
+
+<h1 align="center">Cookie Dumper</h1>
 
 Pull cookies for **one site, on demand**, as `.env` — over a **token-gated
 localhost endpoint**, never touching disk. Built for debugging your own apps:
 fetch a live session token straight into your tool without leaving secrets lying
 around in files.
+
+<p align="center">
+  <img src="docs/media/preview_strip.png" alt="Cookie Dumper icon at 128/48/32/16px" width="260">
+</p>
 
 It does the thing you (rightly) wouldn't trust a random store extension to do —
 read your `HttpOnly` session cookies — so it's deliberately small, dependency-free,
@@ -116,6 +124,30 @@ SESSIONID="abc123..."
 ```
 UPPER_SNAKE keys (non-alphanumeric → `_`), values quoted. `HttpOnly` cookies are
 included (that's the point). Duplicates de-duped; key collisions get a numeric suffix.
+
+## Building & releases
+
+```bash
+npm run build      # -> dist/ (load unpacked) + cookiedumper-<version>.zip
+```
+
+`dist/` contains only the extension files (the `manifest.json` carries a fixed
+public `key`, so the extension ID is **always `ldocjaepomcmbljgaopodjnmnmpgojfm`** —
+which is why `cookiedumper host install` needs no ID argument). The zip is built
+with Node's `zlib`, so there's no `zip` system dependency.
+
+CI (`.github/workflows/build.yml`) builds on every push/PR and uploads the zip as
+a run **artifact**; pushing a version tag attaches it to a **GitHub Release**:
+
+```bash
+git tag v2.1.0 && git push --tags    # -> Release with cookiedumper-2.1.0.zip
+```
+
+**Chrome Web Store?** Not the path here. The store is for end-user extensions; this
+one only works alongside a locally-installed native host (which the store can't
+ship), would face review friction over `cookies` + `<all_urls>` + `nativeMessaging`,
+and would get a store-assigned ID instead of our fixed key. Self-distribution
+(clone / release zip → Load unpacked) is the right fit and keeps it private.
 
 ## Security
 

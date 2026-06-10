@@ -1,0 +1,25 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="badge"><rect x="0" y="0" width="128" height="128" rx="26"/></clipPath>
+  </defs>
+  <g clip-path="url(#badge)">
+    <rect x="0" y="0" width="128" height="128" fill="#FDF4E6"/>
+    <rect x="0" y="94" width="128" height="34" fill="#3BA55D"/>
+    <rect x="0" y="94" width="128" height="5" fill="#2F8F4E"/>
+    <g transform="rotate(-14 56 48)">
+      <circle cx="56" cy="48" r="36" fill="#E0A45E" stroke="#B97E3C" stroke-width="5"/>
+      <circle cx="44" cy="38" r="5.5" fill="#5C3A21"/>
+      <circle cx="64" cy="32" r="5" fill="#5C3A21"/>
+      <circle cx="70" cy="54" r="5.5" fill="#5C3A21"/>
+      <circle cx="48" cy="60" r="5" fill="#5C3A21"/>
+      <circle cx="60" cy="46" r="3.5" fill="#5C3A21"/>
+    </g>
+    <circle cx="97" cy="60" r="8" fill="#E0A45E" stroke="#B97E3C" stroke-width="3.5"/>
+    <circle cx="96" cy="58" r="2.2" fill="#5C3A21"/>
+    <circle cx="106" cy="80" r="6" fill="#E0A45E" stroke="#B97E3C" stroke-width="3"/>
+    <circle cx="88" cy="86" r="4" fill="#B97E3C"/>
+    <circle cx="98" cy="100" r="9" fill="#E0A45E" stroke="#B97E3C" stroke-width="3.5"/>
+    <circle cx="95" cy="98" r="2.4" fill="#5C3A21"/>
+    <circle cx="101" cy="103" r="2.2" fill="#5C3A21"/>
+  </g>
+</svg>

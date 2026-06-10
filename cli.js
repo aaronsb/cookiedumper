@@ -19,6 +19,10 @@ const TOKEN_FILE = path.join(DIR, "token");
 const SERVERS_DIR = path.join(DIR, "servers");
 const HOST_NAME = "com.aaronsb.cookiedumper";
 const HOST_JS = path.join(__dirname, "host.js");
+// Fixed extension ID, derived from the public "key" in manifest.json — stable on
+// every machine/checkout, so `host install` needs no argument. Pass an explicit
+// id only if you load a build without the key (random dev id).
+const STABLE_EXT_ID = "ldocjaepomcmbljgaopodjnmnmpgojfm";
 
 function die(msg) {
   console.error("error: " + msg);
@@ -114,7 +118,8 @@ function hostManifestDirs() {
 }
 
 function installHost(extId) {
-  if (!extId || !/^[a-p]{32}$/.test(extId)) die("usage: cookiedumper host install <EXTENSION_ID> (32-char id from chrome://extensions)");
+  if (!extId) extId = STABLE_EXT_ID; // packed build has a fixed id
+  if (!/^[a-p]{32}$/.test(extId)) die("invalid extension id (expected 32 chars a-p)");
   if (process.platform === "win32") die("Windows native-host install isn't scripted; see README.");
   fs.chmodSync(HOST_JS, 0o755);
   const manifest = JSON.stringify(
@@ -153,7 +158,8 @@ const HELP = `cookiedumper — pull cookies for a site over the secure localhost
   status [--port N]     server status
   token                 print the bearer token (for your app / curl)
   curl <site>           print a ready-to-paste curl command
-  host install <ID>     register the native host (id from chrome://extensions)
+  host install [ID]     register the native host (ID defaults to the packed
+                        build's fixed id; pass one only for an unkeyed dev build)
   host uninstall        remove the native host manifest
 
 <site> is a bare domain (host + subdomains) or a full URL (exact origin).`;

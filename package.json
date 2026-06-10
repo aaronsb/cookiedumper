@@ -6,6 +6,7 @@
     "cookiedumper": "cli.js"
   },
   "scripts": {
+    "build": "node scripts/build.js",
     "host:install": "node cli.js host install",
     "host:uninstall": "node cli.js host uninstall"
   },

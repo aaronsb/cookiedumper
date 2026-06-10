@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to attach the zip to a Release on tag builds
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Syntax check
+        run: |
+          for f in format.js background.js popup.js host.js cli.js scripts/*.js; do
+            node --check "$f"
+          done
+
+      - name: Verify extension id is consistent (manifest key ↔ baked id)
+        run: node scripts/verify-id.js
+
+      - name: Build extension zip
+        run: npm run build
+
+      # Every push/PR: the zip is downloadable from the run's "Artifacts".
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cookiedumper-extension
+          path: cookiedumper-*.zip
+          if-no-files-found: error
+
+      # Tag builds (git tag vX.Y.Z && git push --tags): attach to the Release.
+      - name: Attach zip to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: cookiedumper-*.zip
+          generate_release_notes: true
