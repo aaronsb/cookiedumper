@@ -79,4 +79,8 @@
   }
 
   g.CD = { toEnvKey, toEnvValue, buildFilter, filterHost, formatEnv, getCookies };
+
+  // UMD-ish: also export for Node (the CLI requires the pure helpers; getCookies
+  // is browser-only and simply goes unused there).
+  if (typeof module !== "undefined" && module.exports) module.exports = g.CD;
 })(globalThis);

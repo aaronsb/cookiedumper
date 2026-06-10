@@ -1,28 +1,97 @@
 # Cookie Dumper
 
-A tiny Chrome extension that dumps cookies for a site pattern into `.env` format,
-to make it easy to pull session IDs and other cookie values while debugging your
-own applications.
+Dump cookies for a site pattern into `.env` format — **live**, so the file keeps
+reflecting fresh session tokens as they rotate. Built for debugging your own apps:
+pull session IDs / CSRF tokens straight into a `.env` your tools can read.
 
 It does the thing you (rightly) wouldn't trust a random store extension to do —
 read your `HttpOnly` session cookies and write them to disk — so it's deliberately
-small, dependency-free, and readable end to end: a few HTML/JS files plus a ~70-line
-Node native host. Read it, then trust it.
+small, dependency-free, and readable end to end. Read it, then trust it.
 
-## Install (unpacked)
+## How it's wired
 
-1. Open `chrome://extensions`
-2. Toggle **Developer mode** (top right)
-3. Click **Load unpacked** and select this folder
-4. Pin the 🍪 icon from the extensions menu
+The cookie reading lives in the **extension** (`chrome.cookies` works on every OS —
+no DB decryption, no keyring, no `peanuts`). A tiny **CLI** never touches Chrome; it
+just validates and appends commands to a log file. A **native host** (plain Node)
+bridges the filesystem to the extension. The command log is the single source of
+truth — the CLI and the popup both drive it.
 
-## Quick use (preview / copy / download)
+```
+CLI (validating appender)            filesystem                  extension + native host
+──────────────────────────     ──────────────────────      ─────────────────────────────────
+cookiedumper set/dump/...   ─►   commands.jsonl   ◄── fs.watch ──►  service worker (chrome.cookies)
+cookiedumper tail           ◄─   events.jsonl     ◄── append   ◄──  reports each action
+cookiedumper status         ◄─   heartbeat.json   ◄── stamp    ◄──  liveness + offset
+                                 <your>/.env      ◄── write    ◄──  dump output (0600)
+```
 
-1. Click the toolbar icon — **Site pattern** is pre-filled with the current tab's host.
-2. Adjust the pattern:
-   - **Bare domain** (`example.com`) → matches that host *and* its subdomains.
-   - **Full URL** (`https://app.example.com`) → matches that exact origin/path.
-3. **Dump (preview)** renders `.env` lines. **Copy** or **Download .env**.
+**Live capture** rides `chrome.cookies.onChanged` (an MV3 event that *wakes* the
+worker), debounced → re-dump → write. Pair it with the periodic tab-refresh that
+*drives* rotation, and the loop is: refresh tab → server issues new cookie →
+`onChanged` fires → `.env` rewritten. The on-disk file stays continuously current.
+
+Control dir (override with `COOKIEDUMPER_DIR`): `~/.config/cookiedumper/`.
+
+## Setup
+
+### 1. Load the extension
+
+1. `chrome://extensions` → **Developer mode** → **Load unpacked** → this folder.
+2. Copy the extension **ID** from its card.
+
+### 2. Install the CLI + native host
+
+```bash
+npm link                              # puts `cookiedumper` on your PATH (no deps)
+cookiedumper host install <EXTENSION_ID>
+```
+
+`host install` writes a native-messaging manifest (pointing at `host.js`, locked to
+your extension ID) into each installed Chromium-family browser's config dir, on Linux
+**and** macOS. Then **fully quit and reopen** the browser so it picks up the host.
+
+> Prefer not to use npm? Run the CLI as `node cli.js …`, and the Linux-only
+> `./install-host.sh <EXTENSION_ID>` does the same host registration.
+
+### 3. Verify
+
+```bash
+cookiedumper status        # should show extension ALIVE once the browser is open
+```
+…or click **Test host** in the popup.
+
+## CLI
+
+```bash
+cookiedumper set pattern example.com      # bare domain (+subdomains) or full URL
+cookiedumper set target ~/projects/app/.env   # must be inside $HOME
+cookiedumper live on                      # rewrite .env on every cookie change
+cookiedumper set refreshTab true          # reload matching tabs on each tick
+cookiedumper on                           # enable the recurring tick
+cookiedumper set intervalSec 60           # tick period (30s floor — Chrome's limit)
+
+cookiedumper dump                         # one-shot dump now
+cookiedumper refresh                      # reload matching tabs now
+cookiedumper get                          # show derived config
+cookiedumper status                       # config + liveness + last event
+cookiedumper tail                         # follow events.jsonl
+cookiedumper tail --env                   # follow the target .env as it rewrites
+cookiedumper path                         # print the control dir
+cookiedumper host install <ID> | uninstall
+```
+
+Every command is **validated** (target inside `$HOME`, interval ≥ 30, known keys,
+booleans) and appended as one JSON line to `commands.jsonl`. The extension's host
+watches that file and executes within milliseconds.
+
+## Popup
+
+The popup is a live-preview + manual-trigger UI over the same command log:
+
+- **Dump (preview)** / **Copy** / **Download .env** — inline, no file write.
+- **Target / Live / Refresh / Recurring** — write through to the command log, so
+  the CLI sees the same settings (and vice-versa).
+- **Write now**, **Refresh tabs**, **Test host**.
 
 ## Output format
 
@@ -32,74 +101,32 @@ CSRFTOKEN="..."
 SESSIONID="abc123..."
 ```
 
-- **UPPER_SNAKE keys** — uppercase; non-alphanumeric chars → `_` (`session-id` → `SESSION_ID`).
-- **Quote values** — wrap in double quotes (recommended; values often contain `=`/`;`/spaces).
-- **Prefix** — optional string prepended to every key (e.g. `COOKIE_`).
-
-Duplicate names (same name on multiple paths) are de-duped; post-sanitization key
-collisions get a numeric suffix.
+- **UPPER_SNAKE keys** — uppercase; non-alphanumeric → `_` (`session-id` → `SESSION_ID`).
+- **Quote values** — wrap in double quotes (values often contain `=`/`;`/spaces).
+- **Prefix** — optional string prepended to every key.
 
 `HttpOnly` cookies **are** included (the `chrome.cookies` API exposes them, unlike
-`document.cookie`) — which is the whole point for session debugging.
-
-## Recurring dumps + write-to-disk (native host)
-
-Chrome extensions are sandboxed and can't write to arbitrary paths. To write a real
-file (e.g. `~/projects/app/.env`) on a timer, a small **native messaging host**
-(`host.js`, plain Node) does the file write while the extension feeds it cookies.
-
-### One-time setup
-
-1. Load the unpacked extension and copy its **ID** from `chrome://extensions`.
-2. Register the host:
-   ```bash
-   ./install-host.sh <EXTENSION_ID>
-   ```
-   This drops a manifest into each browser's `NativeMessagingHosts/` dir, pointing
-   at `host.js` and locked to your extension's ID.
-3. **Fully quit and reopen** the browser (or reload the extension).
-4. In the popup, click **Test host** — you should see `Host OK — node …`.
-
-### Using it
-
-In the popup's **Recurring & write-to-disk** section:
-
-- **Target file** — e.g. `~/projects/app/.env`. Must be inside your home dir.
-- **Refresh matching tab(s) before each dump** — reloads any open tab on that host
-  first (so freshly-rotated session cookies are captured), waits ~1.5s, then dumps.
-- **Recurring every N sec** — schedules a background dump via `chrome.alarms`
-  (30s floor — Chrome's minimum). The toolbar badge shows the cookie count, or `ERR`.
-- **Write now** — runs the full refresh → dump → write cycle immediately.
-
-Settings persist in `chrome.storage` and the background worker re-reads them on change.
-
-> **About "alarms":** that's just the name of Chrome's scheduled-timer API
-> (`chrome.alarms`) — the sanctioned way to run code on an interval in a Manifest V3
-> worker. It is not a warning and carries no scary permission prompt.
-
-### Uninstall the host
-
-```bash
-./uninstall-host.sh
-```
+`document.cookie`) — the whole point for session debugging. Duplicate names are
+de-duped; post-sanitization key collisions get a numeric suffix.
 
 ## Permissions
 
 | Permission | Why |
 |---|---|
 | `cookies` + `host_permissions: <all_urls>` | read cookies for any domain you type |
-| `tabs` | find + refresh matching open tabs before a dump |
-| `alarms` | schedule recurring dumps |
-| `storage` | persist your settings + last result |
-| `nativeMessaging` | talk to the local `host.js` that writes the file |
+| `tabs` | find + refresh matching open tabs |
+| `alarms` | recurring tick + revive the worker / port |
+| `storage` | persist derived config + offset |
+| `nativeMessaging` | talk to the local `host.js` (the only thing that touches disk) |
 
 ## Safety notes
 
-- **Writes are confined to `$HOME`.** `host.js` refuses paths outside your home dir
-  unless you set `CD_ALLOW_OUTSIDE_HOME=1` in its environment. Files are written `0600`.
-- Dumped `.env` files contain **live session tokens** — treat them as secrets. The
-  repo's `.gitignore` excludes `*.env`.
-- The host only accepts messages from your specific extension ID (`allowed_origins`).
+- **Writes are confined to `$HOME`.** Both the CLI (refuses to even queue an outside
+  path) and `host.js` enforce this; `CD_ALLOW_OUTSIDE_HOME=1` in the host's env overrides.
+  Files are written `0600`.
+- Dumped `.env` files contain **live session tokens** — treat them as secrets.
+  `.gitignore` excludes `*.env`.
+- The host only accepts connections from your specific extension ID (`allowed_origins`).
 
 ## License
 

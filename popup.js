@@ -1,8 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["pattern", "prefix", "target", "intervalSec"];
-const CHECKS = ["upper", "quote", "refreshTab", "recurring"];
+const TEXT = ["pattern", "prefix", "target", "intervalSec"];
+const CHECK = ["upper", "quote", "refreshTab", "recurring", "live"];
 
 function readForm() {
   return {
@@ -14,17 +14,14 @@ function readForm() {
     quote: $("quote").checked,
     refreshTab: $("refreshTab").checked,
     recurring: $("recurring").checked,
+    live: $("live").checked,
   };
 }
 
 function applyConfig(cfg) {
   if (!cfg) return;
-  for (const f of FIELDS) if (cfg[f] != null) $(f).value = cfg[f];
-  for (const c of CHECKS) if (cfg[c] != null) $(c).checked = cfg[c];
-}
-
-async function saveConfig() {
-  await chrome.storage.local.set({ cdConfig: readForm() });
+  for (const f of TEXT) if (cfg[f] != null) $(f).value = cfg[f];
+  for (const c of CHECK) if (cfg[c] != null) $(c).checked = cfg[c];
 }
 
 function setStatus(msg, cls) {
@@ -33,7 +30,12 @@ function setStatus(msg, cls) {
   el.className = cls || "";
 }
 
-// ---- preview (inline, no file write) ----
+// Persist config through the background worker -> command log (shared with CLI).
+async function saveConfig() {
+  await chrome.runtime.sendMessage({ cmd: "setConfig", set: readForm() });
+}
+
+// ---- live preview (inline, no file write) ----
 async function dump() {
   const cfg = readForm();
   const filter = CD.buildFilter(cfg.pattern);
@@ -66,58 +68,58 @@ function download() {
   setStatus("Downloaded .env", "ok");
 }
 
-// ---- write-to-disk via background + native host ----
 async function writeNow() {
   await saveConfig();
   const cfg = readForm();
   if (!cfg.pattern) return setStatus("Enter a pattern first.");
-  if (!cfg.target) return setStatus("Set a target file to write.");
   setStatus("Dumping + writing via host…");
-  const r = await chrome.runtime.sendMessage({ cmd: "dumpNow", stamp: new Date().toISOString() });
-  if (!r || !r.ok) return setStatus("Dump failed: " + ((r && r.error) || "?"), "err");
-  $("output").value = r.env || "";
-  if (r.writeResult && r.writeResult.ok) {
-    setStatus(`Wrote ${r.count} cookie(s) → ${r.writeResult.path}`, "ok");
-  } else if (r.writeResult) {
-    setStatus("Host error: " + r.writeResult.error, "err");
-  } else {
-    setStatus(`${r.count} cookie(s) dumped (no target set).`);
+  const r = await chrome.runtime.sendMessage({ cmd: "dumpNow" });
+  if (!r || !r.ok) return setStatus("Dump failed.", "err");
+  const { cdLast } = await chrome.storage.local.get("cdLast");
+  if (cdLast) {
+    $("output").value = cdLast.env || "";
+    setStatus(`Dumped ${cdLast.count} cookie(s)${cfg.target ? " → " + cfg.target : " (no target)"}.`, "ok");
   }
 }
 
-async function ping() {
-  setStatus("Pinging native host…");
-  const r = await chrome.runtime.sendMessage({ cmd: "pingHost" });
-  if (r && r.ok) setStatus(`Host OK — node ${r.node}, home ${r.home}`, "ok");
-  else setStatus("Host unreachable: " + ((r && r.error) || "?") + " — run install-host.sh", "err");
+async function refresh() {
+  await saveConfig();
+  const r = await chrome.runtime.sendMessage({ cmd: "refresh" });
+  setStatus(r && r.ok ? `Refreshed ${r.tabs} tab(s).` : "Refresh failed.", r && r.ok ? "ok" : "err");
 }
 
-async function prefill() {
-  const { cdConfig } = await chrome.storage.local.get("cdConfig");
-  applyConfig(cdConfig);
+async function ping() {
+  const r = await chrome.runtime.sendMessage({ cmd: "ping" });
+  setStatus(r && r.ok ? "Native host connected." : "Host unreachable — run: cookiedumper host install <ID>",
+            r && r.ok ? "ok" : "err");
+}
+
+async function init() {
+  // Pull current config from the worker (single source of truth).
+  let state = null;
+  try { state = await chrome.runtime.sendMessage({ cmd: "getState" }); } catch (_) { /* worker waking */ }
+  if (state) {
+    applyConfig(state.cfg);
+    $("conn").textContent = state.connected ? "native host: connected" : "native host: not connected (run host install)";
+    $("conn").className = state.connected ? "ok" : "hint";
+  }
   if (!$("pattern").value) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.url && /^https?:/i.test(tab.url)) $("pattern").value = new URL(tab.url).hostname;
     } catch (_) { /* ignore */ }
   }
-  // Reflect the last scheduled run, if any.
   const { cdLast } = await chrome.storage.local.get("cdLast");
-  if (cdLast && cdLast.env && !$("output").value) {
-    $("output").value = cdLast.env;
-    setStatus(`Last ${cdLast.reason} dump: ${cdLast.count} cookie(s) @ ${cdLast.stamp}`);
-  }
+  if (cdLast && cdLast.env && !$("output").value) $("output").value = cdLast.env;
 }
 
-// Save config whenever the form changes (so the background worker stays in sync).
-for (const id of [...FIELDS, ...CHECKS]) {
-  $(id).addEventListener("change", saveConfig);
-}
+for (const id of [...TEXT, ...CHECK]) $(id).addEventListener("change", saveConfig);
 $("dump").addEventListener("click", dump);
 $("copy").addEventListener("click", copy);
 $("download").addEventListener("click", download);
 $("writeNow").addEventListener("click", writeNow);
+$("refresh").addEventListener("click", refresh);
 $("ping").addEventListener("click", ping);
 $("pattern").addEventListener("keydown", (e) => { if (e.key === "Enter") dump(); });
 
-prefill();
+init();

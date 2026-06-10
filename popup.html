@@ -5,7 +5,7 @@
   <style>
     :root { color-scheme: light dark; }
     body { font: 13px/1.4 system-ui, sans-serif; width: 440px; margin: 0; padding: 12px; }
-    h1 { font-size: 14px; margin: 0 0 10px; }
+    h1 { font-size: 14px; margin: 0 0 4px; }
     h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 14px 0 6px; }
     label { display: block; font-weight: 600; margin: 8px 0 3px; }
     input[type="text"], input[type="number"] { box-sizing: border-box; padding: 6px 8px; font: inherit; }
@@ -15,22 +15,23 @@
     button { padding: 6px 12px; font: inherit; cursor: pointer; }
     button.primary { font-weight: 600; }
     textarea {
-      width: 100%; box-sizing: border-box; height: 170px;
+      width: 100%; box-sizing: border-box; height: 150px;
       font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 8px; resize: vertical; white-space: pre;
     }
     fieldset { border: 1px solid rgba(128,128,128,.4); border-radius: 6px; padding: 8px 10px; margin: 0; }
     #status { font-size: 12px; opacity: 0.8; min-height: 16px; margin-top: 6px; }
+    #conn { font-size: 11px; }
     .hint { font-size: 11px; opacity: 0.65; margin: 2px 0 0; }
-    .err { color: #c0392b; }
-    .ok { color: #2d7d46; }
+    .err { color: #c0392b; } .ok { color: #2d7d46; }
   </style>
 </head>
 <body>
   <h1>🍪 Cookie Dumper</h1>
+  <div id="conn" class="hint">checking host…</div>
 
   <label for="pattern">Site pattern</label>
   <input type="text" id="pattern" placeholder="example.com  or  https://app.example.com" />
-  <p class="hint">Bare domain matches the host + subdomains. Full URL matches that exact origin/path.</p>
+  <p class="hint">Bare domain matches host + subdomains. Full URL matches that exact origin/path.</p>
 
   <div class="row opts">
     <label><input type="checkbox" id="upper" checked /> UPPER_SNAKE keys</label>
@@ -46,26 +47,30 @@
 
   <textarea id="output" spellcheck="false" placeholder="# .env preview appears here"></textarea>
 
-  <h2>Recurring &amp; write-to-disk</h2>
+  <h2>Live capture &amp; write-to-disk</h2>
   <fieldset>
-    <div class="row">
-      <label><input type="checkbox" id="refreshTab" /> Refresh matching tab(s) before each dump</label>
-    </div>
-
     <label for="target">Target file (written by the native host)</label>
     <input type="text" id="target" placeholder="~/projects/app/.env   (blank = no file write)" />
-    <p class="hint">Must be inside your home dir. The popup itself never writes files — the local host does.</p>
+    <p class="hint">Must be inside your home dir. The popup never writes files — the local host does.</p>
 
     <div class="row">
-      <label><input type="checkbox" id="recurring" /> Recurring every</label>
+      <label><input type="checkbox" id="live" /> Live: rewrite on every cookie change</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="refreshTab" /> Refresh matching tab(s) on each tick</label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="recurring" /> Recurring tick every</label>
       <input type="number" id="intervalSec" min="30" step="5" value="60" style="width:80px" /> sec
-      <span class="hint">(30s floor — Chrome's limit)</span>
+      <span class="hint">(30s floor)</span>
     </div>
 
     <div class="row">
       <button id="writeNow">Write now</button>
+      <button id="refresh">Refresh tabs</button>
       <button id="ping">Test host</button>
     </div>
+    <p class="hint">Settings are shared with the <code>cookiedumper</code> CLI via the command log.</p>
   </fieldset>
 
   <div id="status"></div>
