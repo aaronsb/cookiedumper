@@ -4,39 +4,25 @@
   <meta charset="utf-8" />
   <style>
     :root { color-scheme: light dark; }
-    body {
-      font: 13px/1.4 system-ui, sans-serif;
-      width: 420px;
-      margin: 0;
-      padding: 12px;
-    }
+    body { font: 13px/1.4 system-ui, sans-serif; width: 440px; margin: 0; padding: 12px; }
     h1 { font-size: 14px; margin: 0 0 10px; }
+    h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 14px 0 6px; }
     label { display: block; font-weight: 600; margin: 8px 0 3px; }
-    input[type="text"] {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 6px 8px;
-      font: inherit;
-    }
+    input[type="text"], input[type="number"] { box-sizing: border-box; padding: 6px 8px; font: inherit; }
+    input[type="text"]#pattern, input[type="text"]#target { width: 100%; }
     .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
-    .row.opts label { font-weight: 400; margin: 0; display: flex; align-items: center; gap: 4px; }
-    button {
-      padding: 6px 12px;
-      font: inherit;
-      cursor: pointer;
-    }
+    .row.opts label, fieldset label { font-weight: 400; margin: 0; display: flex; align-items: center; gap: 4px; }
+    button { padding: 6px 12px; font: inherit; cursor: pointer; }
     button.primary { font-weight: 600; }
     textarea {
-      width: 100%;
-      box-sizing: border-box;
-      height: 200px;
-      font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
-      padding: 8px;
-      resize: vertical;
-      white-space: pre;
+      width: 100%; box-sizing: border-box; height: 170px;
+      font: 12px/1.4 ui-monospace, Menlo, monospace; padding: 8px; resize: vertical; white-space: pre;
     }
-    #status { font-size: 12px; opacity: 0.75; min-height: 16px; margin-top: 6px; }
+    fieldset { border: 1px solid rgba(128,128,128,.4); border-radius: 6px; padding: 8px 10px; margin: 0; }
+    #status { font-size: 12px; opacity: 0.8; min-height: 16px; margin-top: 6px; }
     .hint { font-size: 11px; opacity: 0.65; margin: 2px 0 0; }
+    .err { color: #c0392b; }
+    .ok { color: #2d7d46; }
   </style>
 </head>
 <body>
@@ -44,7 +30,7 @@
 
   <label for="pattern">Site pattern</label>
   <input type="text" id="pattern" placeholder="example.com  or  https://app.example.com" />
-  <p class="hint">A bare domain matches that host and its subdomains. A full URL matches that exact origin/path.</p>
+  <p class="hint">Bare domain matches the host + subdomains. Full URL matches that exact origin/path.</p>
 
   <div class="row opts">
     <label><input type="checkbox" id="upper" checked /> UPPER_SNAKE keys</label>
@@ -53,14 +39,38 @@
   </div>
 
   <div class="row">
-    <button id="dump" class="primary">Dump cookies</button>
+    <button id="dump" class="primary">Dump (preview)</button>
     <button id="copy">Copy</button>
     <button id="download">Download .env</button>
   </div>
 
-  <textarea id="output" spellcheck="false" placeholder="# .env output appears here"></textarea>
+  <textarea id="output" spellcheck="false" placeholder="# .env preview appears here"></textarea>
+
+  <h2>Recurring &amp; write-to-disk</h2>
+  <fieldset>
+    <div class="row">
+      <label><input type="checkbox" id="refreshTab" /> Refresh matching tab(s) before each dump</label>
+    </div>
+
+    <label for="target">Target file (written by the native host)</label>
+    <input type="text" id="target" placeholder="~/projects/app/.env   (blank = no file write)" />
+    <p class="hint">Must be inside your home dir. The popup itself never writes files — the local host does.</p>
+
+    <div class="row">
+      <label><input type="checkbox" id="recurring" /> Recurring every</label>
+      <input type="number" id="intervalSec" min="30" step="5" value="60" style="width:80px" /> sec
+      <span class="hint">(30s floor — Chrome's limit)</span>
+    </div>
+
+    <div class="row">
+      <button id="writeNow">Write now</button>
+      <button id="ping">Test host</button>
+    </div>
+  </fieldset>
+
   <div id="status"></div>
 
+  <script src="format.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

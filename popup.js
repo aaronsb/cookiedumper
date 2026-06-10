@@ -1,134 +1,123 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const FIELDS = ["pattern", "prefix", "target", "intervalSec"];
+const CHECKS = ["upper", "quote", "refreshTab", "recurring"];
 
-/** Turn a cookie name into a valid env key. */
-function toEnvKey(name, { upper, prefix }) {
-  let key = name.replace(/[^A-Za-z0-9_]/g, "_");
-  if (/^[0-9]/.test(key)) key = "_" + key; // env keys can't start with a digit
-  if (upper) key = key.toUpperCase();
-  if (prefix) key = prefix + key;
-  return key;
-}
-
-/** Quote/escape a value for .env consumption. */
-function toEnvValue(value, { quote }) {
-  const needsQuote = quote || /[\s"'#=$`\\]/.test(value) || value === "";
-  if (!needsQuote) return value;
-  const escaped = value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n")
-    .replace(/\r/g, "\\r");
-  return `"${escaped}"`;
-}
-
-/** Decide whether the input is a full URL or a bare domain, return a getAll filter. */
-function buildFilter(raw) {
-  const input = raw.trim();
-  if (!input) return null;
-  if (/^https?:\/\//i.test(input)) return { url: input };
-  // bare domain (strip any path the user pasted)
-  const domain = input.replace(/^\/\//, "").split("/")[0].replace(/:\d+$/, "");
-  return { domain };
-}
-
-function getCookies(filter) {
-  return new Promise((resolve, reject) => {
-    chrome.cookies.getAll(filter, (cookies) => {
-      const err = chrome.runtime.lastError;
-      if (err) reject(new Error(err.message));
-      else resolve(cookies || []);
-    });
-  });
-}
-
-function formatEnv(cookies, opts) {
-  if (!cookies.length) return "";
-  // De-dupe by name (a name may exist on multiple paths); last one wins, but warn-free.
-  const seen = new Map();
-  for (const c of cookies) seen.set(c.name, c);
-
-  const lines = [];
-  const usedKeys = new Map();
-  for (const c of seen.values()) {
-    let key = toEnvKey(c.name, opts);
-    // disambiguate key collisions caused by sanitization
-    const count = usedKeys.get(key) || 0;
-    usedKeys.set(key, count + 1);
-    if (count > 0) key = `${key}_${count + 1}`;
-    lines.push(`${key}=${toEnvValue(c.value, opts)}`);
-  }
-  return lines.sort().join("\n") + "\n";
-}
-
-function readOpts() {
+function readForm() {
   return {
+    pattern: $("pattern").value.trim(),
+    prefix: $("prefix").value.trim(),
+    target: $("target").value.trim(),
+    intervalSec: Math.max(30, Number($("intervalSec").value) || 60),
     upper: $("upper").checked,
     quote: $("quote").checked,
-    prefix: $("prefix").value.trim(),
+    refreshTab: $("refreshTab").checked,
+    recurring: $("recurring").checked,
   };
 }
 
-function setStatus(msg) {
-  $("status").textContent = msg;
+function applyConfig(cfg) {
+  if (!cfg) return;
+  for (const f of FIELDS) if (cfg[f] != null) $(f).value = cfg[f];
+  for (const c of CHECKS) if (cfg[c] != null) $(c).checked = cfg[c];
 }
 
+async function saveConfig() {
+  await chrome.storage.local.set({ cdConfig: readForm() });
+}
+
+function setStatus(msg, cls) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = cls || "";
+}
+
+// ---- preview (inline, no file write) ----
 async function dump() {
-  const filter = buildFilter($("pattern").value);
-  if (!filter) {
-    setStatus("Enter a domain or URL first.");
-    return;
-  }
+  const cfg = readForm();
+  const filter = CD.buildFilter(cfg.pattern);
+  if (!filter) return setStatus("Enter a domain or URL first.");
   setStatus("Reading cookies…");
   try {
-    const cookies = await getCookies(filter);
-    const env = formatEnv(cookies, readOpts());
-    $("output").value = env || "# no cookies matched this pattern";
-    const label = filter.url ? filter.url : filter.domain;
-    setStatus(`${cookies.length} cookie(s) for ${label}.`);
+    const cookies = await CD.getCookies(filter);
+    $("output").value = CD.formatEnv(cookies, cfg) || "# no cookies matched this pattern";
+    setStatus(`${cookies.length} cookie(s) for ${filter.url || filter.domain}.`);
   } catch (e) {
-    setStatus("Error: " + e.message);
+    setStatus("Error: " + e.message, "err");
   }
 }
 
 async function copy() {
-  const text = $("output").value;
-  if (!text) return;
-  await navigator.clipboard.writeText(text);
-  setStatus("Copied to clipboard.");
+  if (!$("output").value) return;
+  await navigator.clipboard.writeText($("output").value);
+  setStatus("Copied to clipboard.", "ok");
 }
 
 function download() {
   const text = $("output").value;
   if (!text) return;
-  const blob = new Blob([text], { type: "text/plain" });
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = ".env";
   a.click();
   URL.revokeObjectURL(url);
-  setStatus("Downloaded .env");
+  setStatus("Downloaded .env", "ok");
 }
 
-// Pre-fill with the active tab's hostname.
-async function prefill() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url && /^https?:/i.test(tab.url)) {
-      $("pattern").value = new URL(tab.url).hostname;
-    }
-  } catch (_) {
-    /* ignore */
+// ---- write-to-disk via background + native host ----
+async function writeNow() {
+  await saveConfig();
+  const cfg = readForm();
+  if (!cfg.pattern) return setStatus("Enter a pattern first.");
+  if (!cfg.target) return setStatus("Set a target file to write.");
+  setStatus("Dumping + writing via host…");
+  const r = await chrome.runtime.sendMessage({ cmd: "dumpNow", stamp: new Date().toISOString() });
+  if (!r || !r.ok) return setStatus("Dump failed: " + ((r && r.error) || "?"), "err");
+  $("output").value = r.env || "";
+  if (r.writeResult && r.writeResult.ok) {
+    setStatus(`Wrote ${r.count} cookie(s) → ${r.writeResult.path}`, "ok");
+  } else if (r.writeResult) {
+    setStatus("Host error: " + r.writeResult.error, "err");
+  } else {
+    setStatus(`${r.count} cookie(s) dumped (no target set).`);
   }
 }
 
+async function ping() {
+  setStatus("Pinging native host…");
+  const r = await chrome.runtime.sendMessage({ cmd: "pingHost" });
+  if (r && r.ok) setStatus(`Host OK — node ${r.node}, home ${r.home}`, "ok");
+  else setStatus("Host unreachable: " + ((r && r.error) || "?") + " — run install-host.sh", "err");
+}
+
+async function prefill() {
+  const { cdConfig } = await chrome.storage.local.get("cdConfig");
+  applyConfig(cdConfig);
+  if (!$("pattern").value) {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.url && /^https?:/i.test(tab.url)) $("pattern").value = new URL(tab.url).hostname;
+    } catch (_) { /* ignore */ }
+  }
+  // Reflect the last scheduled run, if any.
+  const { cdLast } = await chrome.storage.local.get("cdLast");
+  if (cdLast && cdLast.env && !$("output").value) {
+    $("output").value = cdLast.env;
+    setStatus(`Last ${cdLast.reason} dump: ${cdLast.count} cookie(s) @ ${cdLast.stamp}`);
+  }
+}
+
+// Save config whenever the form changes (so the background worker stays in sync).
+for (const id of [...FIELDS, ...CHECKS]) {
+  $(id).addEventListener("change", saveConfig);
+}
 $("dump").addEventListener("click", dump);
 $("copy").addEventListener("click", copy);
 $("download").addEventListener("click", download);
-$("pattern").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") dump();
-});
+$("writeNow").addEventListener("click", writeNow);
+$("ping").addEventListener("click", ping);
+$("pattern").addEventListener("keydown", (e) => { if (e.key === "Enter") dump(); });
 
 prefill();
