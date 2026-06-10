@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-// cookiedumper CLI — an HTTP client for the secure localhost server the native
-// host runs. It reads the port + bearer token from ~/.config/cookiedumper/
-// server.json (written by the host) and pulls cookies for a specific site on
-// demand. It never touches Chrome or the cookie store directly.
+// cookiedumper CLI — an HTTP client for the secure localhost server(s) the
+// native host runs. Multi-profile aware: each Chrome profile that loads the
+// extension runs its own host on its own port, registered under
+// ~/.config/cookiedumper/servers/. The CLI reads the shared token, enumerates
+// the running servers, and for a dump auto-picks the profile that actually has
+// cookies for the requested site. It never touches Chrome or the cookie store.
 
 const fs = require("fs");
 const path = require("path");
@@ -13,7 +15,8 @@ const http = require("http");
 
 const HOME = os.homedir();
 const DIR = process.env.COOKIEDUMPER_DIR || path.join(HOME, ".config", "cookiedumper");
-const SERVER_JSON = path.join(DIR, "server.json");
+const TOKEN_FILE = path.join(DIR, "token");
+const SERVERS_DIR = path.join(DIR, "servers");
 const HOST_NAME = "com.aaronsb.cookiedumper";
 const HOST_JS = path.join(__dirname, "host.js");
 
@@ -22,42 +25,60 @@ function die(msg) {
   process.exit(1);
 }
 
-function loadServer() {
-  let s;
+function loadToken() {
   try {
-    s = JSON.parse(fs.readFileSync(SERVER_JSON, "utf8"));
-  } catch (_) {
-    die("server not running — load the extension and open the browser, then retry.\n" +
-        "(no " + SERVER_JSON + ")");
-  }
-  if (!s.port || !s.token) die("server.json is incomplete; reload the extension.");
-  return s;
+    const t = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+    if (t.length >= 32) return t;
+  } catch (_) { /* none */ }
+  die("no token — load the extension and open the browser, then retry.\n(no " + TOKEN_FILE + ")");
 }
 
-function request(method, pathname, { stream } = {}) {
-  const s = loadServer();
-  return new Promise((resolve, reject) => {
+function listServers() {
+  let files = [];
+  try { files = fs.readdirSync(SERVERS_DIR).filter((f) => f.endsWith(".json")); } catch (_) { return []; }
+  const out = [];
+  for (const f of files) {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(SERVERS_DIR, f), "utf8"));
+      if (s.port) out.push(s);
+    } catch (_) { /* skip malformed */ }
+  }
+  return out.sort((a, b) => a.port - b.port);
+}
+
+function pruneStale(port) {
+  try { fs.unlinkSync(path.join(SERVERS_DIR, port + ".json")); } catch (_) { /* ignore */ }
+}
+
+// One HTTP request to a specific port. Resolves {status, body, headers} or {err}.
+function reqPort(port, method, pathname, { stream } = {}) {
+  const token = loadToken();
+  return new Promise((resolve) => {
     const req = http.request(
-      { host: "127.0.0.1", port: s.port, method, path: pathname, headers: { authorization: "Bearer " + s.token } },
+      { host: "127.0.0.1", port, method, path: pathname, headers: { authorization: "Bearer " + token } },
       (res) => {
-        if (stream) return resolve(res); // caller consumes the stream (SSE)
-        let data = "";
+        if (stream) return resolve({ stream: res, status: res.statusCode });
+        let body = "";
         res.setEncoding("utf8");
-        res.on("data", (d) => (data += d));
-        res.on("end", () => resolve({ status: res.statusCode, body: data }));
+        res.on("data", (d) => (body += d));
+        res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
       }
     );
-    req.on("error", (e) => {
-      if (e.code === "ECONNREFUSED") reject(new Error("connection refused — is the browser open with the extension loaded?"));
-      else reject(e);
-    });
+    req.on("error", (e) => resolve({ err: e.code || e.message }));
     req.end();
   });
 }
 
-function ok(r) {
-  if (r.status < 200 || r.status >= 300) die(`server returned ${r.status}: ${r.body.trim()}`);
-  return r.body;
+function runningServers() {
+  const servers = listServers();
+  if (!servers.length) die("no running server — open the browser with the extension loaded.");
+  return servers;
+}
+
+function flag(args, name) {
+  const i = args.indexOf(name);
+  if (i < 0) return null;
+  return args[i + 1];
 }
 
 function optsQuery(args) {
@@ -68,8 +89,16 @@ function optsQuery(args) {
     else if (a === "--no-upper") q.set("upper", "0");
     else if (a === "--no-quote") q.set("quote", "0");
     else if (a === "--prefix") q.set("prefix", args[++i] || "");
+    else if (a === "--port") i++; // consumed elsewhere
   }
   return q;
+}
+
+// Resolve which server(s) to use: an explicit --port, else all running.
+function targetPorts(args) {
+  const p = flag(args, "--port");
+  if (p) return [Number(p)];
+  return runningServers().map((s) => s.port);
 }
 
 // ---- native host install (cross-platform: Linux + macOS) ----
@@ -101,7 +130,7 @@ function installHost(extId) {
     n++;
   }
   if (!n) die("no supported browser profile dir found");
-  console.log("host: " + HOST_JS + "\nFully quit & reopen the browser (or reload the extension) to start the server.");
+  console.log("host: " + HOST_JS + "\nReload the extension in each profile (↻ on chrome://extensions) to start its server.");
 }
 
 function uninstallHost() {
@@ -113,103 +142,154 @@ function uninstallHost() {
   console.log(n ? "done." : "nothing to remove.");
 }
 
-const HELP = `cookiedumper — pull cookies for a site over the secure localhost server
+const HELP = `cookiedumper — pull cookies for a site over the secure localhost server(s)
 
-  env <site> [--refresh] [--prefix P] [--no-upper] [--no-quote]
-                        print .env for <site> (bare domain or full URL)
-  watch <site> [opts]   stream a fresh .env every time the site's cookies change (SSE)
-  refresh <site>        reload matching open tabs (drive token rotation)
-  status                server status + where the token lives
+  env <site> [--refresh] [--prefix P] [--no-upper] [--no-quote] [--port N]
+                        print .env for <site>. With multiple profiles, auto-picks
+                        the one that has cookies for <site> (or use --port).
+  watch <site> [--port N]   stream a fresh .env on every cookie change (SSE)
+  refresh <site> [--port N] reload matching tabs (drive token rotation)
+  servers               list running profile servers (port, pid, reachable)
+  status [--port N]     server status
   token                 print the bearer token (for your app / curl)
   curl <site>           print a ready-to-paste curl command
   host install <ID>     register the native host (id from chrome://extensions)
   host uninstall        remove the native host manifest
 
-Examples
-  cookiedumper env app.example.com > .env
-  curl -H "Authorization: Bearer $(cookiedumper token)" \\
-       "http://127.0.0.1:$(cookiedumper status --port)/env?site=app.example.com"`;
+<site> is a bare domain (host + subdomains) or a full URL (exact origin).`;
+
+function cookieCount(r) {
+  if (r && r.headers && r.headers["x-cookie-count"] != null) return Number(r.headers["x-cookie-count"]);
+  if (!r || !r.body) return 0;
+  return r.body.split("\n").filter((l) => /=/.test(l) && !l.startsWith("#")).length;
+}
+
+async function cmdEnv(args) {
+  const site = args[0];
+  if (!site || site.startsWith("--")) die("usage: cookiedumper env <site> [opts]");
+  const q = optsQuery(args.slice(1));
+  q.set("site", site);
+  const ports = targetPorts(args);
+
+  if (ports.length === 1) {
+    const r = await reqPort(ports[0], "GET", "/env?" + q.toString());
+    if (r.err) die(`port ${ports[0]}: ${r.err}`);
+    if (r.status !== 200) die(`server ${ports[0]} returned ${r.status}: ${r.body.trim()}`);
+    return process.stdout.write(r.body);
+  }
+
+  // Multiple profiles: query each, pick the one(s) with cookies.
+  const results = await Promise.all(ports.map(async (p) => ({ port: p, r: await reqPort(p, "GET", "/env?" + q.toString()) })));
+  for (const x of results) if (x.r.err === "ECONNREFUSED") pruneStale(x.port);
+  const reachable = results.filter((x) => x.r.status === 200);
+  if (!reachable.length) die("no reachable server answered (stale registrations pruned; reload the extension).");
+  const withCookies = reachable.filter((x) => cookieCount(x.r) > 0);
+
+  if (withCookies.length === 1) {
+    console.error(`# from profile on port ${withCookies[0].port} (${cookieCount(withCookies[0].r)} cookies)`);
+    return process.stdout.write(withCookies[0].r.body);
+  }
+  if (withCookies.length === 0) {
+    console.error(`# no profile has cookies for ${site} (checked ports ${reachable.map((x) => x.port).join(", ")})`);
+    return process.stdout.write(reachable[0].r.body);
+  }
+  console.error(`# multiple profiles have cookies for ${site}; showing all — use --port to pick one`);
+  for (const x of withCookies) {
+    process.stdout.write(`\n# ===== port ${x.port} (${cookieCount(x.r)} cookies) =====\n`);
+    process.stdout.write(x.r.body);
+  }
+}
+
+async function cmdServers() {
+  const servers = listServers();
+  if (!servers.length) return console.log("no servers registered (open the browser with the extension loaded).");
+  for (const s of servers) {
+    const r = await reqPort(s.port, "GET", "/status");
+    if (r.err === "ECONNREFUSED") { console.log(`  :${s.port}  pid ${s.pid}  DEAD (pruning)`); pruneStale(s.port); }
+    else if (r.status === 200) console.log(`  :${s.port}  pid ${s.pid}  ok`);
+    else console.log(`  :${s.port}  pid ${s.pid}  HTTP ${r.status}`);
+  }
+}
+
+async function cmdWatch(args) {
+  const site = args[0];
+  if (!site || site.startsWith("--")) die("usage: cookiedumper watch <site> [--port N]");
+  let port = flag(args, "--port");
+  if (port) port = Number(port);
+  else {
+    // pick the profile that has cookies for the site
+    const ports = runningServers().map((s) => s.port);
+    if (ports.length === 1) port = ports[0];
+    else {
+      const probes = await Promise.all(ports.map(async (p) => ({ p, n: cookieCount(await reqPort(p, "GET", "/env?site=" + encodeURIComponent(site))) })));
+      const hit = probes.filter((x) => x.n > 0);
+      if (hit.length !== 1) die(`can't auto-pick a profile (${hit.length} have cookies); use --port. See 'cookiedumper servers'.`);
+      port = hit[0].p;
+    }
+  }
+  const q = optsQuery(args.slice(1));
+  q.set("site", site);
+  const { stream, status } = await reqPort(port, "GET", "/events?" + q.toString(), { stream: true });
+  if (status !== 200) die("server returned " + status);
+  console.error(`# watching ${site} on port ${port} — fresh .env on every cookie change (Ctrl-C to stop)`);
+  let buf = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+      const line = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      try { const d = JSON.parse(line.slice(5).trim()); if (d.env) process.stdout.write("\n" + d.env); } catch (_) { /* skip */ }
+    }
+  });
+  stream.on("end", () => process.exit(0));
+}
 
 async function main(argv) {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case undefined: case "-h": case "--help": case "help":
-      console.log(HELP); return;
-
+      return console.log(HELP);
     case "token":
-      console.log(loadServer().token); return;
-
+      return console.log(loadToken());
+    case "servers":
+      return cmdServers();
     case "status": {
-      const s = loadServer();
-      if (rest.includes("--port")) { console.log(s.port); return; }
-      try {
-        const r = await request("GET", "/status");
-        console.log(ok(r).trim());
-      } catch (e) {
-        die(e.message);
+      const ports = targetPorts(rest);
+      for (const p of ports) {
+        const r = await reqPort(p, "GET", "/status");
+        console.log(r.err ? `:${p} ${r.err}` : r.body.trim());
       }
-      console.log("server.json : " + SERVER_JSON + "  (port " + s.port + ")");
       return;
     }
-
-    case "env": {
-      const site = rest[0];
-      if (!site || site.startsWith("--")) die("usage: cookiedumper env <site> [opts]");
-      const q = optsQuery(rest.slice(1));
-      q.set("site", site);
-      const r = await request("GET", "/env?" + q.toString());
-      process.stdout.write(ok(r));
-      return;
-    }
-
+    case "env":
+      return cmdEnv(rest);
+    case "watch":
+      return cmdWatch(rest);
     case "refresh": {
       const site = rest[0];
-      if (!site) die("usage: cookiedumper refresh <site>");
-      const r = await request("POST", "/refresh?site=" + encodeURIComponent(site));
-      console.log(ok(r).trim());
+      if (!site) die("usage: cookiedumper refresh <site> [--port N]");
+      const ports = targetPorts(rest);
+      for (const p of ports) {
+        const r = await reqPort(p, "POST", "/refresh?site=" + encodeURIComponent(site));
+        if (r.status === 200) console.log(`:${p} ${r.body.trim()}`);
+      }
       return;
     }
-
-    case "watch": {
-      const site = rest[0];
-      if (!site || site.startsWith("--")) die("usage: cookiedumper watch <site> [opts]");
-      const q = optsQuery(rest.slice(1));
-      q.set("site", site);
-      const res = await request("GET", "/events?" + q.toString(), { stream: true });
-      if (res.statusCode !== 200) die("server returned " + res.statusCode);
-      console.error(`# watching ${site} — fresh .env on every cookie change (Ctrl-C to stop)`);
-      let buf = "";
-      res.setEncoding("utf8");
-      res.on("data", (chunk) => {
-        buf += chunk;
-        let i;
-        while ((i = buf.indexOf("\n\n")) >= 0) {
-          const frame = buf.slice(0, i); buf = buf.slice(i + 2);
-          const line = frame.split("\n").find((l) => l.startsWith("data:"));
-          if (!line) continue;
-          try {
-            const d = JSON.parse(line.slice(5).trim());
-            if (d.env) { process.stdout.write("\n" + d.env); }
-          } catch (_) { /* skip */ }
-        }
-      });
-      res.on("end", () => process.exit(0));
-      return;
-    }
-
     case "curl": {
       const site = rest[0] || "<site>";
-      const s = loadServer();
-      console.log(`curl -H "Authorization: Bearer ${s.token}" "http://127.0.0.1:${s.port}/env?site=${site}"`);
+      const token = loadToken();
+      for (const s of runningServers()) {
+        console.log(`curl -H "Authorization: Bearer ${token}" "http://127.0.0.1:${s.port}/env?site=${site}"`);
+      }
       return;
     }
-
     case "host":
       if (rest[0] === "install") return installHost(rest[1]);
       if (rest[0] === "uninstall") return uninstallHost();
-      die("usage: cookiedumper host <install <ID>|uninstall>");
-      return;
-
+      return die("usage: cookiedumper host <install <ID>|uninstall>");
     default:
       die(`unknown command '${cmd}'. run 'cookiedumper help'.`);
   }

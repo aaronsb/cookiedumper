@@ -61,11 +61,26 @@ cookiedumper env app.example.com --refresh       # reload the tab first (rotate)
 cookiedumper env api.example.com --prefix API_ --no-quote
 cookiedumper watch app.example.com               # stream a fresh .env on every cookie change
 cookiedumper refresh app.example.com             # just reload matching tabs
-cookiedumper status                              # server status + token location
+cookiedumper servers                             # list running profile servers
+cookiedumper status                              # server status
 cookiedumper token                               # print the bearer token
 cookiedumper curl app.example.com                # ready-to-paste curl command
 cookiedumper host install <ID> | uninstall
 ```
+
+### Multiple profiles
+
+Each Chrome profile that loads the extension runs its own host on its own port,
+all sharing one token. `cookiedumper env <site>` **auto-picks the profile that
+actually has cookies for that site**, so it usually just works. To inspect or
+target explicitly:
+
+```bash
+cookiedumper servers                  # :8787 pid … ok / :43003 pid … ok
+cookiedumper env site.com --port 8787 # force a specific profile
+```
+If more than one profile has cookies for the site, `env` prints all of them
+labeled by port and tells you to pick with `--port`.
 
 From any tool, with the token:
 ```bash
@@ -134,8 +149,10 @@ This is a tool that reads your session cookies, so the boundaries matter:
 - The server is up **only while the browser + extension worker are alive** — by
   design, since the extension is the only cookie source. A keepalive holds the MV3
   worker open; if Chrome reaps it anyway, `status` will say so and a reload revives it.
-- One browser at a time (a second connecting browser falls back to an ephemeral
-  port, recorded in `server.json`).
+- Multiple profiles/browsers are supported: each runs its own host (preferred port
+  8787, then an ephemeral port if taken), registered under
+  `~/.config/cookiedumper/servers/`. `env` auto-picks by cookie presence; use
+  `--port` to disambiguate.
 
 ## License
 
