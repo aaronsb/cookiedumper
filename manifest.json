@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Cookie Dumper",
+  "version": "1.0.0",
+  "description": "Dump cookies for a site pattern into .env format for local debugging.",
+  "permissions": ["cookies", "tabs", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "Cookie Dumper",
+    "default_popup": "popup.html"
+  }
+}

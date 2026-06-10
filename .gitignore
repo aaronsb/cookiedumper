@@ -1,0 +1,10 @@
+# Dumped cookie output — contains live session tokens, never commit
+.env
+*.env
+!*.env.example
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
