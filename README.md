@@ -52,3 +52,7 @@ collide after sanitization get a numeric suffix.
   `document.cookie`), which is what makes this useful for session debugging.
 - This is a local dev tool. Treat dumped `.env` files as secrets — they contain
   live session tokens.
+
+## License
+
+[MIT](LICENSE) © Aaron Bockelie
