@@ -93,6 +93,9 @@ function optsQuery(args) {
     else if (a === "--no-upper") q.set("upper", "0");
     else if (a === "--no-quote") q.set("quote", "0");
     else if (a === "--prefix") q.set("prefix", args[++i] || "");
+    else if (a === "--format") q.set("format", (args[++i] || "env").toLowerCase());
+    else if (a === "--json") q.set("format", "json");
+    else if (a === "--shell") q.set("format", "shell");
     else if (a === "--port") i++; // consumed elsewhere
   }
   return q;
@@ -149,10 +152,13 @@ function uninstallHost() {
 
 const HELP = `cookiedumper — pull cookies for a site over the secure localhost server(s)
 
-  env <site> [--refresh] [--prefix P] [--no-upper] [--no-quote] [--port N]
-                        print .env for <site>. With multiple profiles, auto-picks
-                        the one that has cookies for <site> (or use --port).
-  watch <site> [--port N]   stream a fresh .env on every cookie change (SSE)
+  env <site> [--json|--shell|--format F] [--refresh] [--prefix P]
+             [--no-upper] [--no-quote] [--port N]
+                        print cookies for <site> (default: dotenv-shaped text;
+                        --json or --shell for other formats). With multiple
+                        profiles, auto-picks the one that has cookies for <site>.
+  watch <site> [--json|--shell] [--port N]
+                        stream a fresh dump on every cookie change (SSE)
   refresh <site> [--port N] reload matching tabs (drive token rotation)
   servers               list running profile servers (port, pid, reachable)
   status [--port N]     server status
@@ -247,7 +253,7 @@ async function cmdWatch(args) {
       const frame = buf.slice(0, i); buf = buf.slice(i + 2);
       const line = frame.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
-      try { const d = JSON.parse(line.slice(5).trim()); if (d.env) process.stdout.write("\n" + d.env); } catch (_) { /* skip */ }
+      try { const d = JSON.parse(line.slice(5).trim()); if (d.body) process.stdout.write("\n" + d.body); } catch (_) { /* skip */ }
     }
   });
   stream.on("end", () => process.exit(0));

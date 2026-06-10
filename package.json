@@ -1,6 +1,6 @@
 {
   "name": "cookiedumper",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Secure on-demand cookie dumping over a token-gated localhost endpoint. Chrome (MV3) extension + native host (HTTP server) + CLI client.",
   "bin": {
     "cookiedumper": "cli.js"

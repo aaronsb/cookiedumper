@@ -85,8 +85,10 @@ async function dump(site, opts, refresh) {
     return { ok: false, error: e.message };
   }
   const stamp = new Date().toISOString();
-  const env = CD.formatEnv(cookies, opts || {}, { header: `# cookiedumper ${site} @ ${stamp}` });
-  return { ok: true, env, count: cookies.length };
+  const fmt = (opts && opts.format) || "env";
+  const header = fmt === "json" ? null : `# cookiedumper ${site} @ ${stamp}`;
+  const body = CD.formatCookies(cookies, fmt, opts || {}, { header });
+  return { ok: true, body, count: cookies.length };
 }
 
 async function refreshTabs(site) {
@@ -106,7 +108,7 @@ async function emit(id) {
   const sub = subs.get(id);
   if (!sub) return;
   const r = await dump(sub.site, sub.opts, false);
-  if (r.ok) reply({ type: "event", id, event: "dump", site: sub.site, count: r.count, env: r.env });
+  if (r.ok) reply({ type: "event", id, event: "dump", site: sub.site, count: r.count, body: r.body });
 }
 
 // Live capture: when a cookie for a subscribed site changes, re-emit (debounced).

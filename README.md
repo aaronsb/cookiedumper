@@ -4,10 +4,11 @@
 
 <h1 align="center">Cookie Dumper</h1>
 
-Pull cookies for **one site, on demand**, as `.env` — over a **token-gated
-localhost endpoint**, never touching disk. Built for debugging your own apps:
-fetch a live session token straight into your tool without leaving secrets lying
-around in files.
+A **token-gated localhost API** that serves your browser's live cookies for
+**any site you ask for, on demand** — as **dotenv-shaped text, JSON, or shell
+`export`s**. Nothing is written to disk. Built for debugging your own apps: pull a
+live session token straight into your tool without leaving secrets lying around in
+files.
 
 <p align="center">
   <img src="docs/media/preview_strip.png" alt="Cookie Dumper icon at 128/48/32/16px" width="260">
@@ -28,9 +29,9 @@ HTTP server. The **CLI** and your app are just HTTP clients.
 ```
 your app / curl ──HTTP + bearer token──►┐
 cookiedumper CLI ─HTTP + bearer token──►│ native host (127.0.0.1:8787)  ──native msg──► extension SW
-                                         │   GET /env?site=app.example.com   (relays)      reads cookies
-                                         │   GET /events?site=…  (SSE, live) ◄──────────  for THAT site only
-                                         └─  token in ~/.config/cookiedumper/server.json (0600)
+                                         │   GET /env?site=app.example.com&format=json   (relays)   reads cookies
+                                         │   GET /events?site=…  (SSE, live)  ◄──────────────────  for THAT site only
+                                         └─  token in ~/.config/cookiedumper/token (0600)
 ```
 
 - **Per-site, on demand.** The *request* names the site; you only ever get the
@@ -44,16 +45,17 @@ cookiedumper CLI ─HTTP + bearer token──►│ native host (127.0.0.1:8787)
 ## Setup
 
 ### 1. Load the extension
-1. `chrome://extensions` → **Developer mode** → **Load unpacked** → this folder.
-2. Copy the extension **ID** from its card.
+`chrome://extensions` → **Developer mode** → **Load unpacked** → this folder (or a
+`dist/` from `npm run build`). The `key` in `manifest.json` fixes the extension ID,
+so it's the same on every machine.
 
 ### 2. Install the CLI + native host
 ```bash
-npm link                              # puts `cookiedumper` on your PATH (no deps)
-cookiedumper host install <EXTENSION_ID>
+npm link                  # puts `cookiedumper` on your PATH (no deps)
+cookiedumper host install # ID is baked in from the manifest key — no argument needed
 ```
-Then **fully quit and reopen** the browser so it spawns the host (which starts the
-server). On Linux you can use `./install-host.sh <EXTENSION_ID>` instead of npm.
+Then **reload the extension** (↻ on its card) so it spawns the host (which starts
+the server).
 
 ### 3. Verify
 ```bash
@@ -63,17 +65,19 @@ cookiedumper status      # prints {"ok":true,...} once the browser is open
 ## Use
 
 ```bash
-cookiedumper env app.example.com                 # print .env for one site
-cookiedumper env app.example.com > .env          # ...if you DO want a file (your choice)
+cookiedumper env app.example.com                 # dotenv-shaped text for a site
+cookiedumper env app.example.com --json          # JSON  {"SESSIONID":"…"}
+cookiedumper env app.example.com --shell         # shell  export SESSIONID='…'
+cookiedumper env app.example.com > .env          # ...redirect to a file if you want one
 cookiedumper env app.example.com --refresh       # reload the tab first (rotate), then dump
 cookiedumper env api.example.com --prefix API_ --no-quote
-cookiedumper watch app.example.com               # stream a fresh .env on every cookie change
+cookiedumper watch app.example.com --json        # stream a fresh dump on every cookie change
 cookiedumper refresh app.example.com             # just reload matching tabs
 cookiedumper servers                             # list running profile servers
 cookiedumper status                              # server status
 cookiedumper token                               # print the bearer token
 cookiedumper curl app.example.com                # ready-to-paste curl command
-cookiedumper host install <ID> | uninstall
+cookiedumper host install | uninstall            # ID baked in from the manifest key
 ```
 
 ### Multiple profiles
@@ -102,12 +106,13 @@ curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:$PORT/env?site=app.exa
 
 | Method | Path | Returns |
 |---|---|---|
-| `GET` | `/env?site=<s>&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | `.env` text for that site |
-| `GET` | `/events?site=<s>` | SSE stream; a fresh `.env` per cookie change (live) |
+| `GET` | `/env?site=<s>&format=env\|json\|shell&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | cookies for that site in the chosen format |
+| `GET` | `/events?site=<s>&format=…` | SSE stream; a fresh dump per cookie change (live) |
 | `POST`/`GET` | `/refresh?site=<s>` | reload matching tabs `{ok,tabs}` |
 | `GET` | `/status` | `{ok, version, port}` |
 
-All require `Authorization: Bearer <token>`.
+All require `Authorization: Bearer <token>`. `format` defaults to `env`; the
+response is `text/plain` for `env`/`shell` and `application/json` for `json`.
 
 ## Popup
 
@@ -115,15 +120,26 @@ A live-preview convenience UI: type a site, **Preview** reads cookies inline
 (no server, no disk), **Copy** to clipboard. It also shows the server URL and a
 **Copy token** button so you can wire up your app.
 
-## Output format
+## Output formats
 
+`env` (default) — **dotenv-shaped text** (not a file; it's the *shape*). UPPER_SNAKE
+keys (non-alphanumeric → `_`), values quoted:
 ```
 # cookiedumper app.example.com @ 2026-06-10T19:00:00.000Z
 CSRF_TOKEN="..."
 SESSIONID="abc123..."
 ```
-UPPER_SNAKE keys (non-alphanumeric → `_`), values quoted. `HttpOnly` cookies are
-included (that's the point). Duplicates de-duped; key collisions get a numeric suffix.
+`json` — a `{name: value}` object using the original cookie names:
+```json
+{ "csrftoken": "...", "sessionid": "abc123..." }
+```
+`shell` — `export` lines you can `eval`/`source`:
+```
+export CSRF_TOKEN='...'
+export SESSIONID='abc123...'
+```
+All formats: `HttpOnly` cookies included (that's the point), duplicates de-duped,
+key collisions get a numeric suffix.
 
 ## Building & releases
 
@@ -140,7 +156,7 @@ CI (`.github/workflows/build.yml`) builds on every push/PR and uploads the zip a
 a run **artifact**; pushing a version tag attaches it to a **GitHub Release**:
 
 ```bash
-git tag v2.1.0 && git push --tags    # -> Release with cookiedumper-2.1.0.zip
+git tag v2.2.0 && git push --tags    # -> Release with cookiedumper-2.2.0.zip
 ```
 
 **Chrome Web Store?** Not the path here. The store is for end-user extensions; this

@@ -71,7 +71,7 @@ function onSWMessage(msg) {
   if (msg.type === "event" && sseClients.has(msg.id)) {
     const res = sseClients.get(msg.id);
     res.write(`event: ${msg.event || "dump"}\n`);
-    res.write(`data: ${JSON.stringify({ site: msg.site, count: msg.count, env: msg.env })}\n\n`);
+    res.write(`data: ${JSON.stringify({ site: msg.site, count: msg.count, body: msg.body })}\n\n`);
   }
 }
 
@@ -144,9 +144,13 @@ function send(res, code, body, type = "text/plain") {
   res.end(body);
 }
 
+const FORMATS = ["env", "json", "shell"];
+const CONTENT_TYPE = { env: "text/plain", shell: "text/plain", json: "application/json" };
+
 function parseOpts(q) {
   const bool = (v, d) => (v == null ? d : !/^(0|false|no|off)$/i.test(v));
-  return { upper: bool(q.get("upper"), true), quote: bool(q.get("quote"), true), prefix: q.get("prefix") || "" };
+  const format = (q.get("format") || "env").toLowerCase();
+  return { upper: bool(q.get("upper"), true), quote: bool(q.get("quote"), true), prefix: q.get("prefix") || "", format };
 }
 
 async function handleHttp(req, res) {
@@ -162,10 +166,12 @@ async function handleHttp(req, res) {
   if (url.pathname === "/env") {
     const site = (q.get("site") || "").trim();
     if (!site) return send(res, 400, "missing ?site=<domain-or-url>\n");
+    const opts = parseOpts(q);
+    if (!FORMATS.includes(opts.format)) return send(res, 400, `bad format '${opts.format}'; one of ${FORMATS.join(", ")}\n`);
     try {
-      const r = await requestSW("dump", { site, refresh: /^(1|true|yes|on)$/i.test(q.get("refresh") || ""), opts: parseOpts(q) });
+      const r = await requestSW("dump", { site, refresh: /^(1|true|yes|on)$/i.test(q.get("refresh") || ""), opts });
       res.setHeader("x-cookie-count", String(r.count || 0));
-      return send(res, 200, r.env || "");
+      return send(res, 200, r.body || "", CONTENT_TYPE[opts.format]);
     } catch (e) {
       return send(res, 502, "dump failed: " + e.message + "\n");
     }
