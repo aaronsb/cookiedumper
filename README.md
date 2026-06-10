@@ -73,8 +73,9 @@ git clone https://github.com/aaronsb/cookiedumper && cd cookiedumper
 npm link                   # puts `cookiedumper` on PATH (no deps)
 cookiedumper host install  # ID baked in from the manifest key
 ```
-Load unpacked from the repo (or a `dist/` from `npm run build`), then reload the
-extension and `cookiedumper status`.
+Then `npm run build` and **Load unpacked → `dist/`** (clean, extension-only) and
+`cookiedumper status`. Loading the repo root works too, but if you've generated a
+signing key it warns about `key.pem` in the folder — `dist/` avoids that.
 
 ## Use
 
