@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Cookie Dumper",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtB1mLVybZuKho4j5xmMMeR26tJV6vfBAkgA781RPvUlFUVqVciKz8osUzP6vX9WgUb81zZeyWdn4b6yp8BAcESPNHgT4jPGjBDhTiqxoTJ+MYInsRc9MqcmkQpTvaRdHJRfsrLWnh+7ingQnBiiiM/dxrTZ6QZTwVsqokqqG0dkGQ4NG4E/9BqxnJGU5oK5RVjtnuFOTm0dGvP1LnmHObB1QxqDEvymyvtcIwmIOrEo01489D9E7TjPbbxGvZeZxA3CXCYZpJ0JobX2gd+rwdvudfat6dyJdutQOBW6+FOGccXnZYQRrWOPBWVniI76oafRMkTzVohg3MTJ0IVKbFwIDAQAB",
   "description": "Secure, on-demand cookie dumping: any site, as dotenv/JSON/shell, served over a token-gated localhost endpoint by a local native host. Nothing written to disk.",
   "permissions": [

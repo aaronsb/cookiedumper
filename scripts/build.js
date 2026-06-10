@@ -19,7 +19,7 @@ const ROOT = path.join(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 
 // The extension is exactly these files (everything the manifest references).
-const EXT_FILES = ["manifest.json", "background.js", "popup.html", "popup.js", "format.js"];
+const EXT_FILES = ["manifest.json", "background.js", "popup.html", "popup.js", "format.js", "policy.js"];
 const ICON_DIR = "icons"; // optional: copied if present
 
 const version = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).version;

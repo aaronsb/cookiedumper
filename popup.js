@@ -41,6 +41,59 @@ async function copyToken() {
   setStatus("Token copied.", "ok");
 }
 
+// ---- site policy (persisted in chrome.storage, per profile) ----
+async function loadPolicy() {
+  const { cdPolicy } = await chrome.storage.local.get("cdPolicy");
+  return CDPolicy.normalizePolicy(cdPolicy);
+}
+function renderList(el, items, emptyText) {
+  el.innerHTML = "";
+  if (!items.length) {
+    const s = document.createElement("span");
+    s.className = "hint";
+    s.textContent = emptyText;
+    el.appendChild(s);
+    return;
+  }
+  for (const it of items) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = it + " ";
+    const x = document.createElement("button");
+    x.textContent = "×";
+    x.title = "remove";
+    x.addEventListener("click", () => removePattern(it));
+    chip.appendChild(x);
+    el.appendChild(chip);
+  }
+}
+function renderPolicy(p) {
+  renderList($("includeList"), p.include, "(empty → any site allowed)");
+  renderList($("excludeList"), p.exclude, "(none)");
+}
+async function addPattern(kind) {
+  const input = kind === "include" ? $("includeInput") : $("excludeInput");
+  const pat = input.value.trim().toLowerCase();
+  if (!pat) return;
+  if (kind === "include" && CDPolicy.isTldWildcard(pat)) {
+    return setStatus(`refused '${pat}': *.tld is always disallowed`, "err");
+  }
+  const p = await loadPolicy();
+  const arr = kind === "include" ? p.include : p.exclude;
+  if (!arr.includes(pat)) arr.push(pat);
+  input.value = "";
+  await chrome.storage.local.set({ cdPolicy: p });
+  renderPolicy(p);
+  setStatus(`${kind === "include" ? "allow" : "deny"} ${pat}`, "ok");
+}
+async function removePattern(pat) {
+  const p = await loadPolicy();
+  p.include = p.include.filter((x) => x !== pat);
+  p.exclude = p.exclude.filter((x) => x !== pat);
+  await chrome.storage.local.set({ cdPolicy: p });
+  renderPolicy(p);
+}
+
 async function init() {
   // Prefill the active tab's host.
   try {
@@ -59,14 +112,19 @@ async function init() {
     const site = $("site").value || "app.example.com";
     $("example").innerHTML = `<code>curl -H "Authorization: Bearer &lt;token&gt;" "http://127.0.0.1:${s.port}/env?site=${site}"</code>`;
   } else {
-    $("server").textContent = "server: not connected — run  cookiedumper host install <id>  then reopen the browser";
+    $("server").textContent = "server: not connected — run  cookiedumper host install  then reload the extension";
     $("server").className = "hint";
   }
+  renderPolicy(await loadPolicy());
 }
 
 $("preview").addEventListener("click", preview);
 $("copy").addEventListener("click", copyOut);
 $("copyToken").addEventListener("click", copyToken);
 $("site").addEventListener("keydown", (e) => { if (e.key === "Enter") preview(); });
+$("addInclude").addEventListener("click", () => addPattern("include"));
+$("addExclude").addEventListener("click", () => addPattern("exclude"));
+$("includeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") addPattern("include"); });
+$("excludeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") addPattern("exclude"); });
 
 init();

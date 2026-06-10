@@ -24,6 +24,9 @@
     .hint { font-size: 11px; opacity: 0.65; margin: 2px 0 0; }
     .err { color: #c0392b; } .ok { color: #2d7d46; }
     .mono { font: 12px/1.4 ui-monospace, monospace; word-break: break-all; }
+    .pol { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+    .chip { display: inline-flex; align-items: center; background: rgba(128,128,128,.18); border-radius: 10px; padding: 1px 4px 1px 8px; font: 12px/1.5 ui-monospace, monospace; }
+    .chip button { border: none; background: transparent; cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1; }
   </style>
 </head>
 <body>
@@ -56,9 +59,28 @@
     <p class="hint" id="example">—</p>
   </fieldset>
 
+  <h2>Site policy</h2>
+  <fieldset>
+    <p class="hint">Which sites this profile's API may serve. Empty allow-list = any site.
+      <code>*.tld</code> (e.g. <code>*.com</code>) is always refused.</p>
+    <label>Allow (include)</label>
+    <div id="includeList" class="pol"></div>
+    <div class="row">
+      <input type="text" id="includeInput" placeholder="*.example.com" style="flex:1" />
+      <button id="addInclude">Add</button>
+    </div>
+    <label>Deny (exclude)</label>
+    <div id="excludeList" class="pol"></div>
+    <div class="row">
+      <input type="text" id="excludeInput" placeholder="ads.example.com" style="flex:1" />
+      <button id="addExclude">Add</button>
+    </div>
+  </fieldset>
+
   <div id="status"></div>
 
   <script src="format.js"></script>
+  <script src="policy.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

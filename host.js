@@ -60,12 +60,15 @@ function requestSW(type, payload) {
   });
 }
 
+const RESULTS = new Set(["dumpResult", "refreshResult", "policyResult"]);
 function onSWMessage(msg) {
   if (!msg) return;
-  if ((msg.type === "dumpResult" || msg.type === "refreshResult") && pending.has(msg.id)) {
+  if (RESULTS.has(msg.type) && pending.has(msg.id)) {
     const p = pending.get(msg.id);
     pending.delete(msg.id);
-    msg.ok ? p.resolve(msg) : p.reject(new Error(msg.error || "failed"));
+    // policy results always resolve; dump/refresh reject on explicit failure
+    if (msg.type !== "policyResult" && msg.ok === false) p.reject(new Error(msg.error || "failed"));
+    else p.resolve(msg);
     return;
   }
   if (msg.type === "event" && sseClients.has(msg.id)) {
@@ -170,10 +173,29 @@ async function handleHttp(req, res) {
     if (!FORMATS.includes(opts.format)) return send(res, 400, `bad format '${opts.format}'; one of ${FORMATS.join(", ")}\n`);
     try {
       const r = await requestSW("dump", { site, refresh: /^(1|true|yes|on)$/i.test(q.get("refresh") || ""), opts });
+      if (r.denied) return send(res, 403, "site not allowed: " + (r.reason || "policy") + "\n");
       res.setHeader("x-cookie-count", String(r.count || 0));
       return send(res, 200, r.body || "", CONTENT_TYPE[opts.format]);
     } catch (e) {
       return send(res, 502, "dump failed: " + e.message + "\n");
+    }
+  }
+
+  if (url.pathname === "/policy") {
+    if (req.method === "POST") {
+      try {
+        const r = await requestSW("setPolicy", { op: (q.get("op") || "").toLowerCase(), pattern: q.get("pattern") || "" });
+        if (r.error) return send(res, 400, JSON.stringify({ ok: false, error: r.error }) + "\n", "application/json");
+        return send(res, 200, JSON.stringify(r.policy) + "\n", "application/json");
+      } catch (e) {
+        return send(res, 502, "policy update failed: " + e.message + "\n");
+      }
+    }
+    try {
+      const r = await requestSW("getPolicy", {});
+      return send(res, 200, JSON.stringify(r.policy) + "\n", "application/json");
+    } catch (e) {
+      return send(res, 502, "policy read failed: " + e.message + "\n");
     }
   }
 
@@ -191,6 +213,12 @@ async function handleHttp(req, res) {
   if (url.pathname === "/events") {
     const site = (q.get("site") || "").trim();
     if (!site) return send(res, 400, "missing ?site=\n");
+    try {
+      const chk = await requestSW("checkPolicy", { site });
+      if (chk.denied) return send(res, 403, "site not allowed: " + (chk.reason || "policy") + "\n");
+    } catch (e) {
+      return send(res, 502, "policy check failed: " + e.message + "\n");
+    }
     const id = nextId++;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
     res.write(": subscribed\n\n");

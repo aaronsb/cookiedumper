@@ -88,6 +88,7 @@ cookiedumper env api.example.com --prefix API_ --no-quote
 cookiedumper watch app.example.com --json        # stream a fresh dump on every cookie change
 cookiedumper refresh app.example.com             # just reload matching tabs
 cookiedumper servers                             # list running profile servers
+cookiedumper policy allow '*.example.com'        # scope which sites the API serves
 cookiedumper status                              # server status
 cookiedumper token                               # print the bearer token
 cookiedumper curl app.example.com                # ready-to-paste curl command
@@ -108,6 +109,28 @@ cookiedumper env site.com --port 8787 # force a specific profile
 If more than one profile has cookies for the site, `env` prints all of them
 labeled by port and tells you to pick with `--port`.
 
+### Site policy (which sites the API may serve)
+
+By default any site the token-holder requests is served. You can scope that with
+an **include/exclude policy** of glob patterns. The policy is **defined in the
+extension and persisted in `chrome.storage`** (per profile) — edit it in the popup
+("Site policy"), or from the CLI:
+
+```bash
+cookiedumper policy                         # show this profile's policy
+cookiedumper policy allow '*.example.com'   # only serve example.com + subdomains
+cookiedumper policy deny  ads.example.com   # exclude (takes precedence)
+cookiedumper policy rm '*.example.com'      # remove a pattern
+cookiedumper policy clear                   # back to allow-any
+```
+
+- An empty allow-list means **any site is allowed**; a non-empty one restricts to
+  matches. `exclude` always wins. `*.example.com` matches the apex and subdomains.
+- **`*.tld` wildcards are always refused** (`*.com`, `*.co.uk`, …) — they'd scope
+  the endpoint to a whole TLD. The guard holds even if `chrome.storage` is hand-edited
+  (an all-`*.tld` include list fails **closed**, not open).
+- Requests for disallowed sites get **`403`** (from `/env` and `/events`).
+
 From any tool, with the token:
 ```bash
 TOK=$(cookiedumper token); PORT=$(cookiedumper status --port)
@@ -123,7 +146,11 @@ curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:$PORT/env?site=app.exa
 | `GET` | `/env?site=<s>&format=env\|json\|shell&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | cookies for that site in the chosen format |
 | `GET` | `/events?site=<s>&format=…` | SSE stream; a fresh dump per cookie change (live) |
 | `POST`/`GET` | `/refresh?site=<s>` | reload matching tabs `{ok,tabs}` |
+| `GET` | `/policy` | current `{include,exclude}` for this profile |
+| `POST` | `/policy?op=allow\|deny\|rm\|clear&pattern=<p>` | mutate the policy |
 | `GET` | `/status` | `{ok, version, port}` |
+
+Disallowed sites return `403`.
 
 All require `Authorization: Bearer <token>`. `format` defaults to `env`; the
 response is `text/plain` for `env`/`shell` and `application/json` for `json`.
@@ -131,8 +158,9 @@ response is `text/plain` for `env`/`shell` and `application/json` for `json`.
 ## Popup
 
 A live-preview convenience UI: type a site, **Preview** reads cookies inline
-(no server, no disk), **Copy** to clipboard. It also shows the server URL and a
-**Copy token** button so you can wire up your app.
+(no server, no disk), **Copy** to clipboard. It shows the server URL and a
+**Copy token** button, and has a **Site policy** editor (the allow/exclude
+patterns, persisted in `chrome.storage` for that profile).
 
 ## Output formats
 

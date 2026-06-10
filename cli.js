@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const POLICY = require("./policy.js");
 
 const HOME = os.homedir();
 const DIR = process.env.COOKIEDUMPER_DIR || path.join(HOME, ".config", "cookiedumper");
@@ -161,6 +162,10 @@ const HELP = `cookiedumper — pull cookies for a site over the secure localhost
                         stream a fresh dump on every cookie change (SSE)
   refresh <site> [--port N] reload matching tabs (drive token rotation)
   servers               list running profile servers (port, pid, reachable)
+  policy [list]         show the per-profile allow/exclude site policy
+  policy allow <pat>    add an include pattern (e.g. *.example.com); *.tld refused
+  policy deny  <pat>    add an exclude pattern
+  policy rm <pat> | clear   remove a pattern / clear the policy
   status [--port N]     server status
   token                 print the bearer token (for your app / curl)
   curl <site>           print a ready-to-paste curl command
@@ -209,6 +214,43 @@ async function cmdEnv(args) {
   for (const x of withCookies) {
     process.stdout.write(`\n# ===== port ${x.port} (${cookieCount(x.r)} cookies) =====\n`);
     process.stdout.write(x.r.body);
+  }
+}
+
+// Policy lives in the extension (chrome.storage, per profile). The CLI views and
+// edits it over /policy, which the host relays to the service worker.
+async function cmdPolicy(args) {
+  const sub = args[0];
+  const pattern = args[1] && !args[1].startsWith("--") ? args[1].trim().toLowerCase() : "";
+  const ports = targetPorts(args);
+
+  if (!sub || sub === "list") {
+    for (const p of ports) {
+      const r = await reqPort(p, "GET", "/policy");
+      if (r.status !== 200) { console.log(`:${p}  (${r.err || r.status})`); continue; }
+      const pol = JSON.parse(r.body);
+      console.log(`profile :${p}`);
+      console.log("  include (allow)" + (pol.include.length ? ":" : ":  (empty → any site allowed)"));
+      pol.include.forEach((x) => console.log("    + " + x));
+      console.log("  exclude (deny)" + (pol.exclude.length ? ":" : ":  (none)"));
+      pol.exclude.forEach((x) => console.log("    - " + x));
+    }
+    console.log("always denied: *.tld wildcards (e.g. *.com, *.co.uk)");
+    return;
+  }
+  if (!["allow", "deny", "rm", "clear"].includes(sub)) die("usage: cookiedumper policy [list|allow <p>|deny <p>|rm <p>|clear]");
+  if (sub !== "clear" && !pattern) die(`usage: cookiedumper policy ${sub} <pattern>`);
+  if (sub === "allow" && POLICY.isTldWildcard(pattern)) die(`refusing '${pattern}': TLD-wide wildcards are always disallowed`);
+  const qs = new URLSearchParams({ op: sub });
+  if (pattern) qs.set("pattern", pattern);
+  for (const p of ports) {
+    const r = await reqPort(p, "POST", "/policy?" + qs.toString());
+    if (r.status === 200) {
+      const pol = JSON.parse(r.body);
+      console.log(`:${p}  ${sub}${pattern ? " " + pattern : ""}  → include[${pol.include.length}] exclude[${pol.exclude.length}]`);
+    } else {
+      console.log(`:${p}  ${r.err || r.status}  ${(r.body || "").trim()}`);
+    }
   }
 }
 
@@ -268,6 +310,8 @@ async function main(argv) {
       return console.log(loadToken());
     case "servers":
       return cmdServers();
+    case "policy":
+      return cmdPolicy(rest);
     case "status": {
       const ports = targetPorts(rest);
       for (const p of ports) {
