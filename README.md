@@ -13,8 +13,8 @@
 </p>
 
 A **token-gated localhost API** that serves your browser's live cookies for
-**any site you ask for, on demand** — as **dotenv-shaped text, JSON, or shell
-`export`s**. Nothing is written to disk. Built for debugging your own apps: pull a
+**any site you ask for, on demand** — as **dotenv-shaped text, JSON, shell
+`export`s, or a ready-to-send `Cookie:` header**. Nothing is written to disk. Built for debugging your own apps: pull a
 live session token straight into your tool without leaving secrets lying around in
 files.
 
@@ -74,6 +74,16 @@ Then in the browser:
 Uninstall: `curl -fsSL https://raw.githubusercontent.com/aaronsb/cookiedumper/main/uninstall.sh | bash`
 (add `-s -- --purge` to also delete the checkout).
 
+### Updating
+
+This isn't a Web Store extension, so nothing auto-updates. `cookiedumper update`
+re-runs the installer (a `git pull` in place that brings down both the CLI **and**
+the extension source), then — because the browser loads it unpacked — asks each
+running profile to `runtime.reload()` **only if** the version it has loaded is older
+than what was just pulled. So one command pulls the new code and makes Chrome run it.
+`cookiedumper servers` shows each profile's loaded version and flags when newer code
+is sitting on disk; `cookiedumper reload` forces a reload without pulling.
+
 ### Manual / development
 
 ```bash
@@ -91,6 +101,7 @@ signing key it warns about `key.pem` in the folder — `dist/` avoids that.
 cookiedumper env app.example.com                 # dotenv-shaped text for a site
 cookiedumper env app.example.com --json          # JSON  {"SESSIONID":"…"}
 cookiedumper env app.example.com --shell         # shell  export SESSIONID='…'
+cookiedumper env app.example.com --cookie        # Cookie header value  sessionid=…; csrftoken=…
 cookiedumper env app.example.com > .env          # ...redirect to a file if you want one
 cookiedumper env app.example.com --refresh       # reload the tab first (rotate), then dump
 cookiedumper env api.example.com --prefix API_ --no-quote
@@ -102,6 +113,8 @@ cookiedumper status                              # server status
 cookiedumper token                               # print the bearer token
 cookiedumper curl app.example.com                # ready-to-paste curl command
 cookiedumper host install | uninstall            # ID baked in from the manifest key
+cookiedumper update                              # git-pull in place, then reload the extension if it's stale
+cookiedumper reload                              # reload the unpacked extension from disk (no pull)
 ```
 
 ### Multiple profiles
@@ -152,9 +165,10 @@ curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:$PORT/env?site=app.exa
 
 | Method | Path | Returns |
 |---|---|---|
-| `GET` | `/env?site=<s>&format=env\|json\|shell&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | cookies for that site in the chosen format |
+| `GET` | `/env?site=<s>&format=env\|json\|shell\|cookie&refresh=0\|1&upper=0\|1&quote=0\|1&prefix=…` | cookies for that site in the chosen format |
 | `GET` | `/events?site=<s>&format=…` | SSE stream; a fresh dump per cookie change (live) |
 | `POST`/`GET` | `/refresh?site=<s>` | reload matching tabs `{ok,tabs}` |
+| `POST` | `/reload` | reload the unpacked extension from disk (`runtime.reload`) — picks up pulled code |
 | `GET` | `/policy` | current `{include,exclude}` for this profile |
 | `POST` | `/policy?op=allow\|deny\|rm\|clear&pattern=<p>` | mutate the policy |
 | `GET` | `/status` | `{ok, version, port}` |
@@ -162,7 +176,7 @@ curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:$PORT/env?site=app.exa
 Disallowed sites return `403`.
 
 All require `Authorization: Bearer <token>`. `format` defaults to `env`; the
-response is `text/plain` for `env`/`shell` and `application/json` for `json`.
+response is `text/plain` for `env`/`shell`/`cookie` and `application/json` for `json`.
 
 ## Popup
 
@@ -189,8 +203,18 @@ SESSIONID="abc123..."
 export CSRF_TOKEN='...'
 export SESSIONID='abc123...'
 ```
-All formats: `HttpOnly` cookies included (that's the point), duplicates de-duped,
-key collisions get a numeric suffix.
+`cookie` — a single ready-to-send `Cookie:` header **value** (original names,
+`;`-joined) — send it with `-H "Cookie: $(cookiedumper env app.example.com --cookie)"`:
+```
+sessionid=abc123...; csrftoken=...; atlassian.xsrf.token=...
+```
+Unlike `env`/`shell` this keeps **cookie-store order** (not alphabetical) and applies
+**no quoting** — RFC 6265 cookie values already exclude `;`, whitespace, and control
+chars, so a raw join is safe and quoting would corrupt the header. The joined value
+**is the replayable session** — treat it as sensitive as the `json` values.
+
+All formats: `HttpOnly` cookies included (that's the point), duplicates de-duped
+(last one wins); `env`/`shell` also UPPER_SNAKE the keys and numeric-suffix collisions.
 
 ## Building & releases
 

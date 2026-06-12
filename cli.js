@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const { execFileSync } = require("child_process");
 const POLICY = require("./policy.js");
 
 const HOME = os.homedir();
@@ -86,6 +87,31 @@ function flag(args, name) {
   return args[i + 1];
 }
 
+// Version on disk (this checkout) — re-read fresh, not require()'d, so it reflects
+// a just-pulled package.json. __dirname is the real install dir (node resolves the
+// bin symlink), so it's the same checkout the extension loads from.
+function diskVersion() {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version; }
+  catch (_) { return null; }
+}
+
+// Dotted numeric compare: -1 / 0 / 1. ("2.4.0" vs "2.3.0" -> 1)
+function verCmp(a, b) {
+  const pa = String(a).split("."), pb = String(b).split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (Number(pa[i]) || 0) - (Number(pb[i]) || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+// The version a running profile currently has loaded (from its /status).
+async function runningVersion(port) {
+  const r = await reqPort(port, "GET", "/status");
+  if (r.status !== 200) return null;
+  try { return JSON.parse(r.body).version || null; } catch (_) { return null; }
+}
+
 function optsQuery(args) {
   const q = new URLSearchParams();
   for (let i = 0; i < args.length; i++) {
@@ -97,6 +123,7 @@ function optsQuery(args) {
     else if (a === "--format") q.set("format", (args[++i] || "env").toLowerCase());
     else if (a === "--json") q.set("format", "json");
     else if (a === "--shell") q.set("format", "shell");
+    else if (a === "--cookie") q.set("format", "cookie");
     else if (a === "--port") i++; // consumed elsewhere
   }
   return q;
@@ -151,17 +178,70 @@ function uninstallHost() {
   console.log(n ? "done." : "nothing to remove.");
 }
 
+// Re-run the canonical installer, which updates an existing checkout in place
+// (git pull, or tarball if git is absent), re-chmods, refreshes the bin symlink,
+// and re-registers the native host. Extra flags (e.g. --no-host, --dir <p>) are
+// forwarded. Args go through bash positional params, not string interpolation,
+// so nothing is shell-injected.
+const INSTALL_URL = "https://raw.githubusercontent.com/aaronsb/cookiedumper/main/install.sh";
+async function cmdUpdate(args) {
+  const noReload = args.includes("--no-reload");
+  const passthru = args.filter((a) => a !== "--no-reload"); // installer flags (--no-host, --dir …)
+
+  // 1. Re-run the installer — git pull (or tarball) of the whole checkout, which
+  //    includes the extension source the browser loads from $DATA_DIR.
+  const inner = 'curl -fsSL "$1" | bash -s -- "${@:2}"';
+  console.error("# updating via " + INSTALL_URL + (passthru.length ? " (" + passthru.join(" ") + ")" : ""));
+  try {
+    execFileSync("bash", ["-c", inner, "cookiedumper-update", INSTALL_URL, ...passthru], { stdio: "inherit" });
+  } catch (e) {
+    die("update failed (exit " + (e.status != null ? e.status : "?") + "). Run it manually:\n  curl -fsSL " + INSTALL_URL + " | bash");
+  }
+  if (noReload) return;
+
+  // 2. The browser is unpacked (no Web Store auto-update). The new extension code
+  //    is on disk now but Chrome is still running the old generation. Reload only
+  //    the profiles whose loaded version is older than what we just pulled.
+  const disk = diskVersion();
+  const servers = listServers();
+  if (!servers.length) {
+    return console.log("no running browser to reload — the new code loads when the extension next starts.");
+  }
+  for (const s of servers) {
+    const running = await runningVersion(s.port);
+    if (disk && running && verCmp(disk, running) <= 0) {
+      console.log(`:${s.port} extension already on v${running} — no reload`);
+      continue;
+    }
+    const rr = await reqPort(s.port, "POST", "/reload");
+    if (rr.status === 200) console.log(`:${s.port} reloading extension ${running ? "v" + running : "(unknown)"} -> v${disk || "?"}`);
+    else console.log(`:${s.port} reload failed (${rr.err || rr.status}); reload it manually in chrome://extensions`);
+  }
+}
+
+// Force the loaded extension to reload from disk (runtime.reload) on each profile.
+async function cmdReload(args) {
+  const ports = targetPorts(args);
+  for (const p of ports) {
+    const r = await reqPort(p, "POST", "/reload");
+    console.log(r.status === 200 ? `:${p} reloading extension` : `:${p} ${r.err || r.status}`);
+  }
+}
+
 const HELP = `cookiedumper — pull cookies for a site over the secure localhost server(s)
 
-  env <site> [--json|--shell|--format F] [--refresh] [--prefix P]
+  env <site> [--json|--shell|--cookie|--format F] [--refresh] [--prefix P]
              [--no-upper] [--no-quote] [--port N]
                         print cookies for <site> (default: dotenv-shaped text;
-                        --json or --shell for other formats). With multiple
-                        profiles, auto-picks the one that has cookies for <site>.
+                        --json, --shell, or --cookie for other formats). --cookie
+                        emits a ready-to-send Cookie: header value (original
+                        names, ;-joined). With multiple profiles, auto-picks the
+                        one that has cookies for <site>.
   watch <site> [--json|--shell] [--port N]
                         stream a fresh dump on every cookie change (SSE)
   refresh <site> [--port N] reload matching tabs (drive token rotation)
-  servers               list running profile servers (port, pid, reachable)
+  servers               list running profile servers (port, pid, version; flags a
+                        pending update if newer code is on disk)
   policy [list]         show the per-profile allow/exclude site policy
   policy allow <pat>    add an include pattern (e.g. *.example.com); *.tld refused
   policy deny  <pat>    add an exclude pattern
@@ -172,6 +252,14 @@ const HELP = `cookiedumper — pull cookies for a site over the secure localhost
   host install [ID]     register the native host (ID defaults to the packed
                         build's fixed id; pass one only for an unkeyed dev build)
   host uninstall        remove the native host manifest
+  update [--no-reload] [installer flags]
+                        update to the latest release by re-running the installer
+                        (git pull in place; re-links the CLI and host). Then, since
+                        the extension is unpacked, reloads any running profile whose
+                        loaded version is older than what was pulled. --no-reload
+                        skips that; other flags (--no-host, --dir <path>) forward.
+  reload [--port N]     reload the unpacked extension from disk (pick up pulled
+                        code) on each running profile
 
 <site> is a bare domain (host + subdomains) or a full URL (exact origin).`;
 
@@ -257,12 +345,18 @@ async function cmdPolicy(args) {
 async function cmdServers() {
   const servers = listServers();
   if (!servers.length) return console.log("no servers registered (open the browser with the extension loaded).");
+  const disk = diskVersion();
+  let pending = false;
   for (const s of servers) {
     const r = await reqPort(s.port, "GET", "/status");
-    if (r.err === "ECONNREFUSED") { console.log(`  :${s.port}  pid ${s.pid}  DEAD (pruning)`); pruneStale(s.port); }
-    else if (r.status === 200) console.log(`  :${s.port}  pid ${s.pid}  ok`);
-    else console.log(`  :${s.port}  pid ${s.pid}  HTTP ${r.status}`);
+    if (r.err === "ECONNREFUSED") { console.log(`  :${s.port}  pid ${s.pid}  DEAD (pruning)`); pruneStale(s.port); continue; }
+    if (r.status !== 200) { console.log(`  :${s.port}  pid ${s.pid}  HTTP ${r.status}`); continue; }
+    let v = null; try { v = JSON.parse(r.body).version; } catch (_) { /* old host w/o version */ }
+    const stale = disk && v && verCmp(disk, v) > 0;
+    if (stale) pending = true;
+    console.log(`  :${s.port}  pid ${s.pid}  ok  v${v || "?"}` + (stale ? `  → v${disk} on disk (update pending)` : ""));
   }
+  if (pending) console.log("run 'cookiedumper reload' to load the new code (or 'cookiedumper update' to pull + reload).");
 }
 
 async function cmdWatch(args) {
@@ -346,6 +440,10 @@ async function main(argv) {
       if (rest[0] === "install") return installHost(rest[1]);
       if (rest[0] === "uninstall") return uninstallHost();
       return die("usage: cookiedumper host <install <ID>|uninstall>");
+    case "update":
+      return cmdUpdate(rest);
+    case "reload":
+      return cmdReload(rest);
     default:
       die(`unknown command '${cmd}'. run 'cookiedumper help'.`);
   }
