@@ -211,7 +211,9 @@ sessionid=abc123...; csrftoken=...; atlassian.xsrf.token=...
 Unlike `env`/`shell` this keeps **cookie-store order** (not alphabetical) and applies
 **no quoting** — RFC 6265 cookie values already exclude `;`, whitespace, and control
 chars, so a raw join is safe and quoting would corrupt the header. The joined value
-**is the replayable session** — treat it as sensitive as the `json` values.
+**is the replayable session** — treat it as sensitive as the `json` values. If more
+than one profile has cookies for the site, `--cookie` **refuses** (a Cookie header
+can't merge sessions) and asks you to pin one with `--port`.
 
 All formats: `HttpOnly` cookies included (that's the point), duplicates de-duped
 (last one wins); `env`/`shell` also UPPER_SNAKE the keys and numeric-suffix collisions.

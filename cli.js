@@ -235,8 +235,8 @@ const HELP = `cookiedumper — pull cookies for a site over the secure localhost
                         print cookies for <site> (default: dotenv-shaped text;
                         --json, --shell, or --cookie for other formats). --cookie
                         emits a ready-to-send Cookie: header value (original
-                        names, ;-joined). With multiple profiles, auto-picks the
-                        one that has cookies for <site>.
+                        names, ;-joined; needs --port if >1 profile has the site).
+                        With multiple profiles, auto-picks the one with cookies.
   watch <site> [--json|--shell] [--port N]
                         stream a fresh dump on every cookie change (SSE)
   refresh <site> [--port N] reload matching tabs (drive token rotation)
@@ -297,6 +297,13 @@ async function cmdEnv(args) {
   if (withCookies.length === 0) {
     console.error(`# no profile has cookies for ${site} (checked ports ${reachable.map((x) => x.port).join(", ")})`);
     return process.stdout.write(reachable[0].r.body);
+  }
+  // `cookie` is meant to be one ready-to-send header value; concatenating two
+  // profiles (with `#` separators that would corrupt a header anyway) is never
+  // what you want. Refuse and point at --port instead of emitting garbage.
+  if ((q.get("format") || "env") === "cookie") {
+    die(`multiple profiles have cookies for ${site} (ports ${withCookies.map((x) => x.port).join(", ")}); ` +
+        `a Cookie header can't merge sessions — pick one with --port <N>.`);
   }
   console.error(`# multiple profiles have cookies for ${site}; showing all — use --port to pick one`);
   for (const x of withCookies) {
