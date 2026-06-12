@@ -76,7 +76,7 @@
     return lines.concat(body).join("\n") + "\n";
   }
 
-  const FORMATS = ["env", "json", "shell"];
+  const FORMATS = ["env", "json", "shell", "cookie"];
 
   // Render cookies in the requested shape. `env` (default) is dotenv-shaped text,
   // `shell` is `export KEY=...` lines, `json` is a {name: value} object.
@@ -95,6 +95,15 @@
         lines.push(...body);
       }
       return lines.length ? lines.join("\n") + "\n" : "";
+    }
+    if (fmt === "cookie") {
+      // A ready-to-send `Cookie:` header value: original names, store order
+      // (no sort, unlike env/shell), last-one-wins dedupe, no escaping — RFC 6265
+      // cookie-octet values exclude `;`/whitespace/controls, so a raw join is
+      // safe and quoting would corrupt the header. No comment header either: it
+      // isn't a valid Cookie value. Empty → "".
+      const body = dedupeByName(cookies).map((c) => `${c.name}=${c.value}`).join("; ");
+      return body ? body + "\n" : "";
     }
     return formatEnv(cookies, opts, { header }); // env (default)
   }

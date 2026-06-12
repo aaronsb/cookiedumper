@@ -147,8 +147,8 @@ function send(res, code, body, type = "text/plain") {
   res.end(body);
 }
 
-const FORMATS = ["env", "json", "shell"];
-const CONTENT_TYPE = { env: "text/plain", shell: "text/plain", json: "application/json" };
+const FORMATS = ["env", "json", "shell", "cookie"];
+const CONTENT_TYPE = { env: "text/plain", shell: "text/plain", cookie: "text/plain", json: "application/json" };
 
 function parseOpts(q) {
   const bool = (v, d) => (v == null ? d : !/^(0|false|no|off)$/i.test(v));
@@ -164,6 +164,13 @@ async function handleHttp(req, res) {
 
   if (url.pathname === "/status") {
     return send(res, 200, JSON.stringify({ ok: true, version: VERSION, port: server.address().port, pid: process.pid }) + "\n", "application/json");
+  }
+
+  if (url.pathname === "/reload") {
+    // Fire-and-forget: the SW calls chrome.runtime.reload(), which tears down this
+    // native port (and us) — so we don't await a reply, we just ack the signal.
+    toSW({ type: "reload" });
+    return send(res, 200, JSON.stringify({ ok: true, reloading: true }) + "\n", "application/json");
   }
 
   if (url.pathname === "/env") {

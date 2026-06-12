@@ -82,6 +82,13 @@ async function onHostMessage(msg) {
         reply({ type: "policyResult", id: msg.id, error: e.message });
       }
       return;
+    case "reload":
+      // `cookiedumper update` just git-pulled new extension files to disk. We're
+      // unpacked (not Web Store), so nothing auto-updates — runtime.reload()
+      // re-reads the extension from disk and restarts it on the fresh code. The
+      // delay lets this native message finish processing before the worker dies.
+      setTimeout(() => chrome.runtime.reload(), 50);
+      return;
     case "serverError":
       chrome.storage.local.set({ cdServer: { error: msg.error, connected: false } });
       return;
