@@ -159,7 +159,10 @@ function parseOpts(q) {
 async function handleHttp(req, res) {
   const url = new URL(req.url, "http://127.0.0.1");
   if (!localOnly(req)) return send(res, 403, "forbidden\n");
-  if (!tokenOk(req)) return send(res, 401, "unauthorized\n");
+  if (!tokenOk(req)) return send(res, 401,
+    "cookiedumper: this is a local-only cookie export helper for your own Chrome profile.\n" +
+    "Requests need a bearer token, shared with the CLI via ~/.config/cookiedumper/token.\n" +
+    "Use the `cookiedumper` CLI rather than calling this port directly. See https://github.com/aaronsb/cookiedumper\n");
   const q = url.searchParams;
 
   if (url.pathname === "/status") {
