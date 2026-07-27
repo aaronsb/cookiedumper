@@ -61,8 +61,8 @@ curl -fsSL https://raw.githubusercontent.com/aaronsb/cookiedumper/main/install.s
 Clones into `~/.local/share/cookiedumper` (XDG), symlinks `cookiedumper` into
 `~/.local/bin`, and registers the native messaging host (the extension ID is baked
 in from the manifest key, so no ID argument is needed). Re-run anytime to update.
-Flags via `… | bash -s -- <flags>`: `--no-symlink`, `--no-host`, `--dir <path>`,
-`--bin <path>`. Prefer to read before running? `curl -fsSL …/install.sh -o
+Flags via `… | bash -s -- <flags>`: `--no-symlink`, `--no-host`, `--no-verify`,
+`--dir <path>`, `--bin <path>`. Prefer to read before running? `curl -fsSL …/install.sh -o
 install.sh && less install.sh && bash install.sh`.
 
 Then in the browser:
