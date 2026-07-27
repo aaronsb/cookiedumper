@@ -100,6 +100,9 @@ if [ "$DO_HOST" = 1 ]; then
   node "$DATA_DIR/cli.js" host install >/dev/null || warn "host install reported an issue"
 fi
 
+CLI_HINT="node $DATA_DIR/cli.js"
+[ "$DO_SYMLINK" = 1 ] && CLI_HINT="cookiedumper"
+
 # ---- provision the shared config dir + bearer token ----
 # host.js creates these lazily on its first successful spawn, which means a fresh
 # install has no token until a browser has run. Provisioning here decouples the
@@ -128,17 +131,26 @@ fi
 
 # ---- verify the native host can actually be spawned ----
 # The installer previously told the user to "expect {\"ok\":true,...}" without
-# checking anything, so a broken host (missing node on the GUI PATH, a bad
-# shebang, a syntax error, a quarantine xattr) surfaced only as a silent failure
-# in the browser with no way to tell host-side from browser-side. This spawns
-# host.js exactly as Chrome does — origin as argv[1], 4-byte-LE-length-prefixed
-# JSON on stdio — and waits for its `ready` frame.
+# checking anything, so a broken host surfaced only as a silent failure in the
+# browser with no way to tell host-side from browser-side.
+#
+# Two details make this check meaningful rather than decorative:
+#   1. It execs the LAUNCHER (what the manifest points at) directly, with no
+#      explicit interpreter — exactly how the browser starts the host.
+#   2. It does so under launchd's minimal PATH, which is what a GUI-launched
+#      browser actually inherits. Verifying under the installing shell's PATH
+#      would pass on machines where the browser fails, which is the whole bug.
+GUI_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 verify_host() {
-  COOKIEDUMPER_VERIFY_HOST="$DATA_DIR/host.js" node -e '
+  target="$DATA_DIR/host-launcher.sh"
+  [ -x "$target" ] || target="$DATA_DIR/host.js"
+  COOKIEDUMPER_VERIFY_TARGET="$target" COOKIEDUMPER_GUI_PATH="$GUI_PATH" node -e '
     const {spawn}=require("child_process");
-    const host=process.env.COOKIEDUMPER_VERIFY_HOST;
+    const target=process.env.COOKIEDUMPER_VERIFY_TARGET;
     const origin="chrome-extension://verify.invalid/";
-    const child=spawn(process.execPath,[host,origin],{stdio:["pipe","pipe","pipe"]});
+    const env={PATH:process.env.COOKIEDUMPER_GUI_PATH,HOME:process.env.HOME};
+    if(process.env.COOKIEDUMPER_DIR) env.COOKIEDUMPER_DIR=process.env.COOKIEDUMPER_DIR;
+    const child=spawn(target,[origin],{stdio:["pipe","pipe","pipe"],env});
     let buf=Buffer.alloc(0), errs="", done=false;
     const finish=(code,msg)=>{ if(done)return; done=true; if(msg)console.log(msg);
       try{child.kill("SIGTERM");}catch(_){} process.exit(code); };
@@ -168,16 +180,16 @@ verify_host() {
 if [ "$DO_VERIFY" = 1 ]; then
   say "verifying the native host can be spawned"
   if out="$(verify_host)"; then
-    say "native host OK ($out)"
+    say "native host OK ($out, under a GUI-minimal PATH)"
   else
     warn "native host did NOT come up: $out"
-    warn "the browser side cannot work until this does. check: node on PATH for GUI apps,"
-    warn "  '$DATA_DIR/host.js' executable, and 'xattr -l' clean of com.apple.quarantine."
+    warn "the browser side cannot work until this does. checked under PATH=$GUI_PATH,"
+    warn "which is what a GUI-launched browser inherits. if the error is 'node: No such"
+    warn "file or directory', the launcher is missing or stale — re-run '$CLI_HINT host install'."
+    warn "otherwise check '$DATA_DIR/host.js' is executable and 'xattr -l' is clean of"
+    warn "com.apple.quarantine."
   fi
 fi
-
-CLI_HINT="node $DATA_DIR/cli.js"
-[ "$DO_SYMLINK" = 1 ] && CLI_HINT="cookiedumper"
 
 cat <<EOF
 
