@@ -6,18 +6,11 @@
 # Installs the code into $XDG_DATA_HOME/cookiedumper, symlinks the CLI into your
 # XDG bin dir (~/.local/bin), registers the native messaging host, provisions the
 # shared config dir + bearer token, and verifies the host can actually be spawned.
-# Re-running updates an existing install. Flags (pass via `... | bash -s -- --no-symlink`):
-#   --no-symlink   don't link the `cookiedumper` command into bin
-#   --no-host      don't register the native messaging host
-#   --no-verify    skip the post-install native-host spawn check
-#   --dir <path>   install location (default $XDG_DATA_HOME/cookiedumper)
-#   --bin <path>   symlink target dir (default $XDG_BIN_HOME or ~/.local/bin)
-# Env: COOKIEDUMPER_DIR overrides the config dir (must match host.js, which reads
-#      the same variable and otherwise defaults to ~/.config/cookiedumper).
-#      COOKIEDUMPER_REPO / COOKIEDUMPER_BRANCH override what gets cloned. Note the
-#      clone source is baked in below, so running a FORK's copy of this script still
-#      installs upstream unless you set COOKIEDUMPER_REPO — the script installs the
-#      project, it doesn't install whatever checkout you happen to run it from.
+# Re-running updates an existing install.
+#
+# Run with --help for flags and environment variables. That text lives in usage()
+# below rather than up here: when the script is piped from curl — the documented
+# way to run it — $0 is `bash` and there is no file to scrape a header out of.
 set -euo pipefail
 
 REPO="${COOKIEDUMPER_REPO:-https://github.com/aaronsb/cookiedumper.git}"
@@ -32,6 +25,36 @@ DO_SYMLINK=1
 DO_HOST=1
 DO_VERIFY=1
 
+# Single source of truth for --help. Quoted heredoc, so the $VARs below are shown
+# literally rather than expanded to this machine's values.
+usage() {
+  cat <<'USAGE'
+Cookie Dumper installer — XDG-compliant, idempotent.
+
+  curl -fsSL https://raw.githubusercontent.com/aaronsb/cookiedumper/main/install.sh | bash
+
+Installs the code into $XDG_DATA_HOME/cookiedumper, symlinks the CLI into your
+XDG bin dir (~/.local/bin), registers the native messaging host, provisions the
+shared config dir + bearer token, and verifies the host can actually be spawned.
+Re-running updates an existing install.
+
+Flags (pass via `... | bash -s -- --no-symlink`):
+  --no-symlink   don't link the `cookiedumper` command into bin
+  --no-host      don't register the native messaging host
+  --no-verify    skip the post-install native-host spawn check
+  --dir <path>   install location (default $XDG_DATA_HOME/cookiedumper)
+  --bin <path>   symlink target dir (default $XDG_BIN_HOME or ~/.local/bin)
+
+Environment:
+  COOKIEDUMPER_DIR     config dir. Must match host.js, which reads the same
+                       variable and otherwise defaults to ~/.config/cookiedumper.
+  COOKIEDUMPER_REPO    clone source and branch. The defaults are baked in, so
+  COOKIEDUMPER_BRANCH  running a FORK's copy of this script still installs
+                       upstream unless COOKIEDUMPER_REPO is set — the script
+                       installs the project, not whatever checkout you ran it from.
+USAGE
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-symlink) DO_SYMLINK=0 ;;
@@ -39,7 +62,7 @@ while [ $# -gt 0 ]; do
     --no-verify) DO_VERIFY=0 ;;
     --dir) DATA_DIR="$2"; shift ;;
     --bin) BIN_DIR="$2"; shift ;;
-    -h|--help) sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; exit 1 ;;
   esac
   shift
