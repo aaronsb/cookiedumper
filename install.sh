@@ -14,6 +14,10 @@
 #   --bin <path>   symlink target dir (default $XDG_BIN_HOME or ~/.local/bin)
 # Env: COOKIEDUMPER_DIR overrides the config dir (must match host.js, which reads
 #      the same variable and otherwise defaults to ~/.config/cookiedumper).
+#      COOKIEDUMPER_REPO / COOKIEDUMPER_BRANCH override what gets cloned. Note the
+#      clone source is baked in below, so running a FORK's copy of this script still
+#      installs upstream unless you set COOKIEDUMPER_REPO — the script installs the
+#      project, it doesn't install whatever checkout you happen to run it from.
 set -euo pipefail
 
 REPO="${COOKIEDUMPER_REPO:-https://github.com/aaronsb/cookiedumper.git}"
@@ -35,7 +39,7 @@ while [ $# -gt 0 ]; do
     --no-verify) DO_VERIFY=0 ;;
     --dir) DATA_DIR="$2"; shift ;;
     --bin) BIN_DIR="$2"; shift ;;
-    -h|--help) sed -n '2,16p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'unknown arg: %s\n' "$1" >&2; exit 1 ;;
   esac
   shift
